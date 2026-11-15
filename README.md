@@ -16,7 +16,7 @@ In Settings > Secrets and variables > Actions, create:
 - TELEGRAM_BOT_TOKEN: token created through Telegram BotFather.
 - TELEGRAM_CHAT_ID: destination chat ID. Start the bot and send it a message first.
 
-Test manually via Actions > KHALID DOWNLOADER > Run workflow. The first version caps Telegram uploads at 49 MiB. Larger files report a clear error; a later release can add an authorized storage/link delivery route.
+Files larger than 49 MiB are automatically compressed to fit Telegram's bot upload limit. The compressed video is encoded as MP4 (H.264/AAC); shorter videos retain more quality than longer ones. If the video cannot fit at a usable quality, the workflow sends a clear error message instead.
 
 ## Cloudflare Worker
 Deploy api/cloudflare-worker using Wrangler. Configure Worker secrets API_SECRET and GITHUB_TOKEN. Use a fine-grained GitHub token restricted to this repository with Actions read/write and metadata read-only. Set ALLOWED_ORIGIN to the exact HTTPS website origin. Never put the GitHub token in frontend code or an iPhone Shortcut.
