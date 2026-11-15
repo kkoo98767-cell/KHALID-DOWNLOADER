@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#090c0d">
   <title>KHALID DOWNLOADER — DARK RIDER</title>
-  <link rel="stylesheet" href="style.css?v=knight-loop-mobile-20261115">
+  <link rel="stylesheet" href="style.css?v=full-screen-glass-20261115">
 </head>
 <body>
 <main class="shell">
@@ -78,8 +78,6 @@
       <video id="knight-video" class="knight-video" muted playsinline loop preload="none" aria-hidden="true"></video>
       <span class="art-caption">FORGED IN SILENCE · FIVE LOOPING SCENES</span>
     </div>
-  </section>
-
   <section id="download" class="panel">
     <div class="panel-heading"><span class="panel-mark">I</span><div><p class="eyebrow">THE NEXT CHAPTER</p><h2>Send a video</h2></div></div>
     <label for="url">VIDEO URL</label>
@@ -89,6 +87,9 @@
     <div id="progress" class="progress" hidden><div class="progress-meta"><span id="progress-label">Sending request…</span><strong id="progress-value">0%</strong></div><div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div></div>
     <p id="result" class="result" role="status" aria-live="polite">Configure the API endpoint and access key before your first request.</p>
   </section>
+  </section>
+
+
 
   <section class="features">
     <article><b>01</b><div><strong>Paste a link</strong><p>Supported public links are detected by the extractor.</p></div></article>
@@ -100,6 +101,6 @@
 
 <div id="setup" class="modal" hidden><div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="setup-title"><h2 id="setup-title">Connection settings</h2><p>Enter your deployed Cloudflare Worker URL and shared API secret. These are stored in this browser only.</p><label for="endpoint">WORKER URL</label><input id="endpoint" type="url" placeholder="https://…workers.dev"><label for="secret">API SECRET</label><input id="secret" type="password" placeholder="Shared secret"><p id="setup-error" class="result error" hidden></p><div class="dialog-actions"><button class="secondary" id="cancel" type="button">Cancel</button><button class="primary" id="save" type="button">Save settings</button></div></div></div>
 <button class="settings-link" id="open-settings" type="button">Connection settings</button>
-<script src="script.js?v=knight-loop-mobile-20261115"></script>
+<script src="script.js?v=full-screen-glass-20261115"></script>
 </body>
 </html>
