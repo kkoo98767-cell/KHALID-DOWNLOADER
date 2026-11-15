@@ -16,7 +16,7 @@ from botocore.config import Config
 
 TELEGRAM_API = "https://api.telegram.org"
 TELEGRAM_DIRECT_UPLOAD_LIMIT = 49 * 1024 * 1024
-PRESIGNED_URL_EXPIRES_SECONDS = 5 * 24 * 60 * 60
+PRESIGNED_URL_EXPIRES_SECONDS = 60 * 60
 R2_KEY_PREFIX = "khalid-downloads"
 
 
@@ -119,7 +119,7 @@ def deliver(token, chat_id, media_path, source, title):
     message = (
         "الفيديو الأصلي جاهز بدون ضغط أو تغيير في الجودة.\n"
         f"{title[:300]}\n\n"
-        "رابط تنزيل خاص، صالح لمدة 5 أيام:\n"
+        "رابط تنزيل خاص، صالح لمدة ساعة واحدة:\n"
         f"{link}"
     )
     telegram_call(token, "sendMessage", {"chat_id": chat_id, "text": message})
