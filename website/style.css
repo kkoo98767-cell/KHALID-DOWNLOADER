@@ -12,3 +12,13 @@
 .progress-track{height:9px;border-radius:99px;background:#303044;overflow:hidden;border:1px solid #414158}
 .progress-fill{height:100%;width:0%;border-radius:99px;background:linear-gradient(90deg,#7958e8,#b49cff);transition:width .16s ease;box-shadow:0 0 12px #9677ff80}
 @media(prefers-reduced-motion:reduce){.primary,.progress-fill{transition:none}.primary.is-loading .button-icon{animation:none}}
+
+
+/* Connection settings modal (no <dialog> dependency) */
+.modal{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;padding:15px;background:#000a}
+.modal[hidden]{display:none}
+.modal-card{width:min(440px,100%);background:#1b1d2a;color:#fff;border:1px solid #393b50;border-radius:16px;padding:24px;max-height:90vh;overflow:auto}
+.modal-card p{color:#a8a9b8;font-size:12px;line-height:1.6}
+.modal-card p.error{color:#ff9b9b}
+.modal-card input{width:100%;margin-bottom:16px}
+.settings-link{position:relative;z-index:1}
