@@ -15,7 +15,7 @@ function setProgress(value, label) {
 }
 function openSettings() { const s = settings(); $("endpoint").value = s.endpoint; $("secret").value = s.secret; $("setup").showModal(); }
 $("open-settings").addEventListener("click", openSettings);
-$("save").addEventListener("click", event => { const endpoint = $("endpoint").value.trim(); const secret = $("secret").value.trim(); if (!endpoint || !secret) { event.preventDefault(); return; } localStorage.setItem("kd_endpoint", endpoint.replace(/\\/$/, "")); localStorage.setItem("kd_secret", secret); show("Settings saved in this browser.", "success"); });
+$("save").addEventListener("click", event => { const endpoint = $("endpoint").value.trim(); const secret = $("secret").value.trim(); if (!endpoint || !secret) { event.preventDefault(); return; } localStorage.setItem("kd_endpoint", endpoint.replace(/\/$/)); localStorage.setItem("kd_secret", secret); show("Settings saved in this browser.", "success"); });
 $("paste").addEventListener("click", async () => { try { $("url").value = await navigator.clipboard.readText(); } catch { show("Clipboard blocked. Paste the link manually.", "error"); } });
 $("submit").addEventListener("click", async () => {
   const s = settings();
