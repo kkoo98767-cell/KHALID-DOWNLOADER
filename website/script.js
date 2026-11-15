@@ -90,3 +90,66 @@ $("submit").addEventListener("click", async () => {
   }
 });
 if (!settings().endpoint) show("Deploy the Worker, then add its URL and API secret in Connection settings.");
+
+
+// Rotate through the five user-provided knight clips without loading them all at once.
+(() => {
+  const video = document.getElementById("knight-video");
+  const scene = video?.closest(".scene-art");
+  if (!video || !scene) return;
+
+  const clips = [
+    "media/clip-01.mp4.b64",
+    "media/clip-02.mp4.b64",
+    "media/clip-03.mp4.b64",
+    "media/clip-04.mp4.b64",
+    "media/clip-05.mp4.b64"
+  ];
+  let lastClip = -1;
+  let activeUrl = "";
+
+  function decodeVideo(encoded) {
+    const binary = atob(encoded.trim());
+    const chunks = [];
+    const chunkSize = 32768;
+    for (let offset = 0; offset < binary.length; offset += chunkSize) {
+      const end = Math.min(offset + chunkSize, binary.length);
+      const bytes = new Uint8Array(end - offset);
+      for (let i = offset; i < end; i++) bytes[i - offset] = binary.charCodeAt(i);
+      chunks.push(bytes);
+    }
+    return new Blob(chunks, { type: "video/mp4" });
+  }
+
+  async function changeClip() {
+    const choices = clips.map((_, index) => index).filter(index => index !== lastClip);
+    const next = choices[Math.floor(Math.random() * choices.length)];
+    try {
+      const response = await fetch(clips[next], { cache: "force-cache" });
+      if (!response.ok) throw new Error("Clip could not be loaded");
+      const blob = decodeVideo(await response.text());
+      const nextUrl = URL.createObjectURL(blob);
+      video.classList.remove("is-visible");
+      scene.classList.remove("has-video");
+      video.pause();
+      video.src = nextUrl;
+      video.load();
+      await new Promise((resolve, reject) => {
+        video.addEventListener("loadeddata", resolve, { once: true });
+        video.addEventListener("error", reject, { once: true });
+      });
+      await video.play();
+      const previousUrl = activeUrl;
+      activeUrl = nextUrl;
+      lastClip = next;
+      video.classList.add("is-visible");
+      scene.classList.add("has-video");
+      if (previousUrl) window.setTimeout(() => URL.revokeObjectURL(previousUrl), 1200);
+      window.setTimeout(changeClip, 30000 + Math.floor(Math.random() * 16000));
+    } catch {
+      window.setTimeout(changeClip, 12000);
+    }
+  }
+
+  window.setTimeout(changeClip, 700);
+})();
