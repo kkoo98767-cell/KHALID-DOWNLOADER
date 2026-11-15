@@ -24,7 +24,7 @@ def validate_url(raw):
     host = parsed.hostname.lower()
     if host in {"localhost", "127.0.0.1", "::1"} or host.endswith((".local", ".internal")):
         raise ValueError("Local network URLs are not accepted.")
-    if re.search(r"[\\x00-\\x20]", value):
+    if re.search(r"[\x00-\x20]", value):
         raise ValueError("URL contains whitespace or control characters.")
     return value
 
