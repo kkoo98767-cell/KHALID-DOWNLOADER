@@ -25,5 +25,7 @@ Create the R2 bucket and an R2 API token with read and write access restricted t
 ## Cloudflare Worker
 Deploy api/cloudflare-worker using Wrangler. Configure Worker secrets API_SECRET and GITHUB_TOKEN. Use a fine-grained GitHub token restricted to this repository with Actions read/write and metadata read-only. Set ALLOWED_ORIGIN to the exact HTTPS website origin. Never put the GitHub token or R2 credentials in frontend code or an iPhone Shortcut.
 
+The Cloudflare Worker Git build is connected to this repository's `main` branch and uses `api/cloudflare-worker` as its root directory. Worker changes pushed to `main` deploy with `npx wrangler deploy`.
+
 ## Limitations
 GitHub Actions is a short-lived runner, not a 24/7 server or permanent file host. Private, DRM-protected, login-required, or access-controlled media is unsupported. Public extractors may stop working when platforms change their sites. Do not expose an unrestricted public download endpoint.
