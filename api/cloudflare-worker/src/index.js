@@ -1,4 +1,6 @@
-const VERSION = "2026-11-15.3";
+const VERSION = "2026-11-15.4";
+const DOWNLOAD_PREFIX = "khalid-downloads/";
+const DOWNLOAD_RETENTION_MS = 60 * 60 * 1000;
 
 const reply = (body, status = 200, headers = {}) =>
   new Response(JSON.stringify(body), {
@@ -10,7 +12,33 @@ const reply = (body, status = 200, headers = {}) =>
     }
   });
 
+async function cleanExpiredDownloads(bucket) {
+  const cutoff = Date.now() - DOWNLOAD_RETENTION_MS;
+  let cursor;
+  let deleted = 0;
+
+  do {
+    const page = await bucket.list({
+      prefix: DOWNLOAD_PREFIX,
+      limit: 1000,
+      ...(cursor ? { cursor } : {})
+    });
+    const expired = page.objects.filter(object => object.uploaded.getTime() <= cutoff);
+    for (const object of expired) {
+      await bucket.delete(object.key);
+      deleted += 1;
+    }
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+
+  console.log("Expired R2 downloads removed", { deleted });
+}
+
 export default {
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(cleanExpiredDownloads(env.DOWNLOADS));
+  },
+
   async fetch(request, env) {
     const origin = request.headers.get("Origin") || "";
     const allowedOrigin = env.ALLOWED_ORIGIN || "";

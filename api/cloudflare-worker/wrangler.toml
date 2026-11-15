@@ -7,3 +7,10 @@ GITHUB_OWNER = "kkoo98767-cell"
 GITHUB_REPO = "KHALID-DOWNLOADER"
 GITHUB_WORKFLOW = "downloader.yml"
 ALLOWED_ORIGIN = "https://kkoo98767-cell.github.io"
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[r2_buckets]]
+binding = "DOWNLOADS"
+bucket_name = "khalid-downloader-files"
