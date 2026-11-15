@@ -27,7 +27,7 @@ $("cancel").addEventListener("click", closeSettings);
 $("setup").addEventListener("click", e => { if (e.target === $("setup")) closeSettings(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeSettings(); });
 $("save").addEventListener("click", () => {
-  const endpoint = $("endpoint").value.trim().replace(/\\/+$/, "");
+  const endpoint = $("endpoint").value.trim().replace(/\/+$/, "");
   const secret = $("secret").value.trim();
   const err = $("setup-error");
   try { const u = new URL(endpoint); if (u.protocol !== "https:") throw Error(); }
