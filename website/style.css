@@ -92,3 +92,13 @@ footer{text-align:center;border-top:1px solid #6f77651f;padding:20px 0 0}
  .settings{padding:16px 2px}
 }
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.primary,.progress-fill{transition:none}.primary.is-loading .button-icon{animation:none}}
+
+/* Random looping knight footage, with the original SVG as its loading fallback */
+.scene-art:after{z-index:2}
+.scene-art svg{position:relative;z-index:0;transition:opacity .9s ease}
+.knight-video{position:absolute;inset:0;z-index:1;width:100%;height:100%;object-fit:cover;object-position:center 54%;opacity:0;transition:opacity .9s ease;filter:saturate(.82) contrast(1.08)}
+.knight-video.is-visible{opacity:.94}
+.scene-art.has-video svg{opacity:0}
+.art-caption{z-index:3}
+@media(max-width:760px){.knight-video{object-position:58% center}}
+@media(prefers-reduced-motion:reduce){.knight-video{transition:none}}
