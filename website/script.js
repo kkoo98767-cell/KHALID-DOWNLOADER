@@ -62,12 +62,8 @@ $("submit").addEventListener("click", async () => {
     window.setTimeout(() => {
       button.disabled = false;
       button.classList.remove("is-loading");
-      if (button.querySelector(".button-label").textContent !== originalLabel) {
-        if (button.querySelector(".button-label").textContent === "REQUEST SENT") {
-          button.querySelector(".button-label").textContent = "QUEUE DOWNLOAD";
-          button.querySelector(".button-icon").textContent = "↓";
-        }
-      }
+      button.querySelector(".button-label").textContent = originalLabel;
+      button.querySelector(".button-icon").textContent = "↓";
     }, 1600);
   }
 });
