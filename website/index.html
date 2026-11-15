@@ -1,7 +1,104 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#10121a"><title>KHALID DOWNLOADER</title><link rel="stylesheet" href="style.css?v=modal-20261115b"></head>
-<body><main class="shell"><header><div class="brand"><span class="brand-icon">↓</span><div><strong>KHALID DOWNLOADER</strong><small>YOUR PERSONAL MEDIA HUB</small></div></div><span class="status"><i></i> READY</span></header>
-<section class="hero"><p class="eyebrow">SIMPLE. PRIVATE. PERSONAL.</p><h1>Download <span>your media.</span></h1><p class="sub">Submit an eligible public video link and receive the result in Telegram.</p></section>
-<section class="panel"><label for="url">VIDEO URL</label><div class="url-wrap"><input id="url" type="url" placeholder="Paste a video link here…" autocomplete="url"><button id="paste" class="secondary" type="button">Paste</button></div><div class="settings"><div><small>QUALITY</small><strong>Best available</strong></div><div><small>DELIVERY</small><strong>Telegram</strong></div></div><button id="submit" class="primary" type="button"><span class="button-icon">↓</span><span class="button-label">QUEUE DOWNLOAD</span></button><div id="progress" class="progress" hidden><div class="progress-meta"><span id="progress-label">Sending request…</span><strong id="progress-value">0%</strong></div><div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div></div><p id="result" class="result" role="status" aria-live="polite">Configure the API endpoint and access key before your first request.</p></section>
-<section class="features"><article><b>01</b><div><strong>Paste a link</strong><p>Supported public links are detected by the extractor.</p></div></article><article><b>02</b><div><strong>Secure processing</strong><p>Your GitHub token stays on the server, never in this page.</p></div></article><article><b>03</b><div><strong>Telegram delivery</strong><p>Receive a message when processing succeeds or fails.</p></div></article></section><footer>Only download content you own or are authorized to save. Private, DRM-protected and access-restricted media are not supported.</footer></main>
-<div id="setup" class="modal" hidden><div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="setup-title"><h2 id="setup-title">Connection settings</h2><p>Enter your deployed Cloudflare Worker URL and shared API secret. These are stored in this browser only.</p><label for="endpoint">WORKER URL</label><input id="endpoint" type="url" placeholder="https://…workers.dev"><label for="secret">API SECRET</label><input id="secret" type="password" placeholder="Shared secret"><p id="setup-error" class="result error" hidden></p><div class="dialog-actions"><button class="secondary" id="cancel" type="button">Cancel</button><button class="primary" id="save" type="button">Save settings</button></div></div></div><button class="settings-link" id="open-settings" type="button">Connection settings</button><script src="script.js?v=modal-20261115b"></script></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#090c0d">
+  <title>KHALID DOWNLOADER — DARK RIDER</title>
+  <link rel="stylesheet" href="style.css?v=dark-rider-20261115">
+</head>
+<body>
+<main class="shell">
+  <header>
+    <a class="brand" href="#" aria-label="Khalid Downloader home">
+      <span class="brand-icon" aria-hidden="true">K</span>
+      <span><strong>KHALID DOWNLOADER</strong><small>THE DARK RIDER</small></span>
+    </a>
+    <span class="status"><i></i> READY</span>
+  </header>
+
+  <section class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow"><span></span> YOUR MEDIA. YOUR WAY.</p>
+      <h1>Ride into<br><span>the dark.</span></h1>
+      <p class="sub">A quiet, secure way to send your videos straight to Telegram.</p>
+      <a class="hero-jump" href="#download">START A DOWNLOAD <span aria-hidden="true">↓</span></a>
+    </div>
+    <div class="scene-art" aria-label="A dark armored knight riding through a moonlit landscape, arrows lodged in his back" role="img">
+      <svg viewBox="0 0 900 510" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#273436"/><stop offset=".55" stop-color="#151f21"/><stop offset="1" stop-color="#0a1011"/></linearGradient>
+          <radialGradient id="moonGlow"><stop stop-color="#d6d5c1" stop-opacity=".43"/><stop offset="1" stop-color="#d6d5c1" stop-opacity="0"/></radialGradient>
+          <linearGradient id="armor" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#555d59"/><stop offset=".5" stop-color="#252d2b"/><stop offset="1" stop-color="#0b1111"/></linearGradient>
+          <linearGradient id="horse" x1="0" y1="0" x2=".8" y2="1"><stop stop-color="#4d514a"/><stop offset=".55" stop-color="#242a27"/><stop offset="1" stop-color="#0b1110"/></linearGradient>
+          <linearGradient id="mist" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#8e9a8d" stop-opacity="0"/><stop offset="1" stop-color="#9aa294" stop-opacity=".18"/></linearGradient>
+        </defs>
+        <rect width="900" height="510" fill="url(#sky)"/>
+        <circle cx="676" cy="125" r="143" fill="url(#moonGlow)"/>
+        <circle cx="676" cy="125" r="57" fill="#c8c8b6" opacity=".76"/>
+        <path d="M0 285 122 186l80 69 103-139 128 157 94-97 113 115 95-145 165 156v208H0Z" fill="#172120" opacity=".9"/>
+        <path d="m0 350 150-108 102 95 134-127 110 129 120-104 113 103 99-78 72 67v183H0Z" fill="#101817"/>
+        <path d="M0 325c133-42 214 48 343 13 133-36 219-64 330-14 98 45 153 11 227-6v192H0Z" fill="url(#mist)"/>
+        <path d="M0 424c166-48 287-4 425-25 139-21 309-44 475-2v113H0Z" fill="#090e0e"/>
+        <!-- Horse -->
+        <g fill="url(#horse)" stroke="#778078" stroke-opacity=".23" stroke-width="2">
+          <path d="M278 254c-29-39-25-92 4-122 21-22 51-18 68 1 12 13 18 32 19 50 18-18 42-31 68-37l36-9c23-6 40 4 52 20l33 42 38 15 10 21-26 12-31-8-22-21-28-19c-13 23-30 43-56 57-37 20-90 30-130 13-13 29-19 69-18 103l-24 6-17-12 4-64c-16 32-26 74-22 110l-26 4-14-13 4-91c-31 25-46 61-48 104l-24 1-14-16 15-100c3-24 19-41 45-46Z"/>
+          <path d="M473 135c10-19 19-42 20-64l18-22 7 32 19-21 7 32-8 34c14 9 26 22 29 36l-26 15-25-10-18-18Z"/>
+          <path d="M508 79 498 55l15 12 11-25 4 31 23-13-15 25Z" fill="#343b37"/>
+          <path d="M483 77c-27 43-57 63-96 81l12 20c45-13 82-34 111-67Z" fill="#171e1c"/>
+        </g>
+        <path d="M530 127c13 7 25 8 39 4" fill="none" stroke="#bbc0ae" stroke-opacity=".34" stroke-width="3"/>
+        <circle cx="522" cy="78" r="3.5" fill="#d4c49c" opacity=".8"/>
+        <!-- Knight, cloak, and saddle -->
+        <g fill="url(#armor)" stroke="#90958a" stroke-opacity=".26" stroke-width="2">
+          <path d="M339 211c8-28 23-48 48-59l30-6 35 24 19 46-24 19-90 1Z"/>
+          <path d="M375 157c-21 19-39 33-63 43-5 34 9 59 41 74l55-44-11-57Z" fill="#171d1b"/>
+          <path d="M401 151c-20-10-30-30-24-52l16-22 35 7 19 29-11 33-20 12Z"/>
+          <path d="M375 105c-3-29 6-50 28-61l35 8 21 32-10 19-33-11-19 23Z"/>
+          <path d="m399 76 2-28 13 17 14-21 2 31Z" fill="#656c62"/>
+          <path d="M379 112c24 12 44 10 66-1l-5 16c-21 14-43 14-60 0Z" fill="#101615"/>
+          <path d="M392 222c21 8 55 7 83-3l16 14-40 15-60-3Z" fill="#171e1c"/>
+          <path d="M420 233c-15 22-34 35-55 43l-14-10 22-41Z"/>
+          <path d="M454 235c17 17 27 28 42 32l9-13-24-34Z"/>
+          <path d="m449 159 22 33-13 23-22-31Z" fill="#363e3a"/>
+          <path d="m387 171-19 34 17 7 20-33Z" fill="#343b37"/>
+        </g>
+        <path d="M402 130h29m-24 13h19m-38 51 40 2m20 15 22-5" stroke="#a7aa9b" stroke-opacity=".4" stroke-width="2"/>
+        <path d="M391 248c61 15 117 13 164-2" fill="none" stroke="#8d8062" stroke-width="8" opacity=".6"/>
+        <!-- Three arrows lodged in the rider's back -->
+        <g fill="none" stroke-linecap="round">
+          <path d="M409 96 346 24" stroke="#171a18" stroke-width="7"/><path d="m346 24-19-17 7 25-21 7 28 2Z" fill="#a7a28f" stroke="none"/>
+          <path d="M400 112 316 65" stroke="#171a18" stroke-width="7"/><path d="m316 65-23-10 13 21-18 12 27-4Z" fill="#9b9888" stroke="none"/>
+          <path d="M423 92 388 10" stroke="#171a18" stroke-width="7"/><path d="m388 10-15-19 3 26-21 4 26 9Z" fill="#aaa694" stroke="none"/>
+          <circle cx="409" cy="96" r="7" fill="#8b887a" stroke="none"/><circle cx="400" cy="112" r="7" fill="#8b887a" stroke="none"/><circle cx="423" cy="92" r="7" fill="#8b887a" stroke="none"/>
+        </g>
+        <path d="M0 463c180-18 263-2 420-13 198-15 304-6 480-18v78H0Z" fill="#080c0c"/>
+        <path d="M47 469h173m345-12h116m102 18h78" stroke="#7b8278" stroke-opacity=".19" stroke-width="2"/>
+      </svg>
+      <span class="art-caption">AFTER THE FALL · THE ROAD REMAINS</span>
+    </div>
+  </section>
+
+  <section id="download" class="panel">
+    <div class="panel-heading"><span class="panel-mark">I</span><div><p class="eyebrow">THE NEXT CHAPTER</p><h2>Send a video</h2></div></div>
+    <label for="url">VIDEO URL</label>
+    <div class="url-wrap"><input id="url" type="url" placeholder="Paste a video link here…" autocomplete="url"><button id="paste" class="secondary" type="button">Paste</button></div>
+    <div class="settings"><div><small>QUALITY</small><strong>Best available</strong></div><div><small>DELIVERY</small><strong>Telegram</strong></div></div>
+    <button id="submit" class="primary" type="button"><span class="button-icon">↓</span><span class="button-label">QUEUE DOWNLOAD</span></button>
+    <div id="progress" class="progress" hidden><div class="progress-meta"><span id="progress-label">Sending request…</span><strong id="progress-value">0%</strong></div><div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div></div>
+    <p id="result" class="result" role="status" aria-live="polite">Configure the API endpoint and access key before your first request.</p>
+  </section>
+
+  <section class="features">
+    <article><b>01</b><div><strong>Paste a link</strong><p>Supported public links are detected by the extractor.</p></div></article>
+    <article><b>02</b><div><strong>Secure processing</strong><p>Your GitHub token stays on the server, never in this page.</p></div></article>
+    <article><b>03</b><div><strong>Telegram delivery</strong><p>Receive a message when processing succeeds or fails.</p></div></article>
+  </section>
+  <footer>Only download content you own or are authorized to save. Private, DRM-protected and access-restricted media are not supported.</footer>
+</main>
+
+<div id="setup" class="modal" hidden><div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="setup-title"><h2 id="setup-title">Connection settings</h2><p>Enter your deployed Cloudflare Worker URL and shared API secret. These are stored in this browser only.</p><label for="endpoint">WORKER URL</label><input id="endpoint" type="url" placeholder="https://…workers.dev"><label for="secret">API SECRET</label><input id="secret" type="password" placeholder="Shared secret"><p id="setup-error" class="result error" hidden></p><div class="dialog-actions"><button class="secondary" id="cancel" type="button">Cancel</button><button class="primary" id="save" type="button">Save settings</button></div></div></div>
+<button class="settings-link" id="open-settings" type="button">Connection settings</button>
+<script src="script.js?v=modal-20261115b"></script>
+</body>
+</html>
