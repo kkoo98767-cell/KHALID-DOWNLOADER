@@ -1,19 +1,23 @@
-import math
+import mimetypes
 import os
 import re
-import shutil
-import subprocess
+import secrets
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 from urllib.parse import urlparse
 
+import boto3
 import requests
 import yt_dlp
+from boto3.s3.transfer import TransferConfig
+from botocore.config import Config
 
-MAX_UPLOAD_BYTES = 49 * 1024 * 1024
-TARGET_UPLOAD_BYTES = 46 * 1024 * 1024
 TELEGRAM_API = "https://api.telegram.org"
+TELEGRAM_DIRECT_UPLOAD_LIMIT = 49 * 1024 * 1024
+PRESIGNED_URL_EXPIRES_SECONDS = 5 * 24 * 60 * 60
+R2_KEY_PREFIX = "khalid-downloads"
 
 
 def validate_url(raw):
@@ -30,7 +34,12 @@ def validate_url(raw):
 
 
 def telegram_call(token, method, data=None, files=None):
-    response = requests.post(f"{TELEGRAM_API}/bot{token}/{method}", data=data, files=files, timeout=(30, 180))
+    response = requests.post(
+        f"{TELEGRAM_API}/bot{token}/{method}",
+        data=data,
+        files=files,
+        timeout=(30, 900),
+    )
     response.raise_for_status()
     payload = response.json()
     if not payload.get("ok"):
@@ -42,48 +51,78 @@ def notify(token, chat_id, message):
     telegram_call(token, "sendMessage", {"chat_id": chat_id, "text": message[:3900]})
 
 
-def compress_video(media_path, duration, temp_dir):
-    if not shutil.which("ffmpeg"):
-        raise RuntimeError("This video is too large for Telegram and ffmpeg is not available to compress it.")
-    if not duration or duration <= 0:
-        raise RuntimeError("This video is too large for Telegram and its duration could not be determined.")
+def r2_download_link(media_path):
+    account_id = os.environ.get("R2_ACCOUNT_ID", "").strip()
+    bucket = os.environ.get("R2_BUCKET_NAME", "").strip()
+    access_key = os.environ.get("R2_ACCESS_KEY_ID", "").strip()
+    secret_key = os.environ.get("R2_SECRET_ACCESS_KEY", "").strip()
+    missing = [
+        name for name, value in {
+            "R2_ACCOUNT_ID": account_id,
+            "R2_BUCKET_NAME": bucket,
+            "R2_ACCESS_KEY_ID": access_key,
+            "R2_SECRET_ACCESS_KEY": secret_key,
+        }.items() if not value
+    ]
+    if missing:
+        raise RuntimeError("Large files need Cloudflare R2. Missing Actions secrets: " + ", ".join(missing))
 
-    # Leave a few MiB of headroom below Telegram's upload cap for reliable multipart uploads.
-    total_kbps = (TARGET_UPLOAD_BYTES * 8) / duration / 1000
-    audio_kbps = 96
-    video_kbps = math.floor(total_kbps - audio_kbps)
-    if video_kbps < 150:
-        raise RuntimeError("This video is too long to fit Telegram's upload limit at a usable quality.")
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
+        region_name="auto",
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        config=Config(signature_version="s3v4", connect_timeout=30, read_timeout=900, retries={"max_attempts": 5}),
+    )
+    safe_name = re.sub(r'[^A-Za-z0-9._-]', "_", media_path.name)[:180] or "video"
+    key = f"{R2_KEY_PREFIX}/{secrets.token_hex(16)}/{safe_name}"
+    content_type = mimetypes.guess_type(media_path.name)[0] or "application/octet-stream"
+    ascii_name = re.sub(r'[^A-Za-z0-9._-]', "_", media_path.name)[:180] or "video"
+    encoded_name = quote(media_path.name, safe="")
+    s3.upload_file(
+        str(media_path),
+        bucket,
+        key,
+        ExtraArgs={
+            "ContentType": content_type,
+            "ContentDisposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{encoded_name}",
+        },
+        Config=TransferConfig(
+            multipart_threshold=64 * 1024 * 1024,
+            multipart_chunksize=64 * 1024 * 1024,
+            max_concurrency=4,
+            use_threads=True,
+        ),
+    )
+    return s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": key},
+        ExpiresIn=PRESIGNED_URL_EXPIRES_SECONDS,
+    )
 
-    compressed = Path(temp_dir) / "telegram-compressed.mp4"
-    for attempt in range(3):
-        rate = max(150, math.floor(video_kbps * (0.85 ** attempt)))
-        command = [
-            "ffmpeg", "-y", "-i", str(media_path),
-            "-map", "0:v:0", "-map", "0:a:0?",
-            "-c:v", "libx264", "-preset", "veryfast", "-b:v", f"{rate}k",
-            "-maxrate", f"{rate}k", "-bufsize", f"{rate * 2}k",
-            "-c:a", "aac", "-b:a", f"{audio_kbps}k",
-            "-movflags", "+faststart", str(compressed),
-        ]
-        try:
-            subprocess.run(command, check=True, capture_output=True, text=True, timeout=900)
-        except subprocess.TimeoutExpired as exc:
-            raise RuntimeError("Video compression exceeded the 15-minute limit.") from exc
-        except subprocess.CalledProcessError as exc:
-            detail = (exc.stderr or "ffmpeg failed")[-1200:]
-            raise RuntimeError("Could not compress the video: " + detail) from exc
-        if compressed.exists() and compressed.stat().st_size <= MAX_UPLOAD_BYTES:
-            return compressed
 
-    raise RuntimeError("The video could not be compressed below Telegram's 49 MiB upload limit.")
+def deliver(token, chat_id, media_path, source, title):
+    if media_path.stat().st_size <= TELEGRAM_DIRECT_UPLOAD_LIMIT:
+        method = "sendVideo" if media_path.suffix.lower() in {".mp4", ".mov"} else "sendDocument"
+        field = "video" if method == "sendVideo" else "document"
+        with media_path.open("rb") as stream:
+            telegram_call(
+                token,
+                method,
+                {"chat_id": chat_id, "caption": "KHALID DOWNLOADER | Source: " + source[:700]},
+                {field: (media_path.name, stream)},
+            )
+        return
 
-
-def deliver(token, chat_id, media_path, source):
-    method = "sendVideo" if media_path.suffix.lower() in {".mp4", ".mov"} else "sendDocument"
-    field = "video" if method == "sendVideo" else "document"
-    with media_path.open("rb") as stream:
-        telegram_call(token, method, {"chat_id": chat_id, "caption": "KHALID DOWNLOADER | Source: " + source[:700]}, {field: (media_path.name, stream)})
+    link = r2_download_link(media_path)
+    message = (
+        "الفيديو الأصلي جاهز بدون ضغط أو تغيير في الجودة.\n"
+        f"{title[:300]}\n\n"
+        "رابط تنزيل خاص، صالح لمدة 5 أيام:\n"
+        f"{link}"
+    )
+    telegram_call(token, "sendMessage", {"chat_id": chat_id, "text": message})
 
 
 def main():
@@ -97,21 +136,25 @@ def main():
         url = validate_url(raw_url)
         with tempfile.TemporaryDirectory(prefix="khalid-downloader-") as temp:
             template = str(Path(temp) / "%(title).100B-%(id)s.%(ext)s")
-            options = {"format": "bestvideo*+bestaudio/best", "outtmpl": template, "noplaylist": True, "restrictfilenames": True, "retries": 2, "fragment_retries": 2, "socket_timeout": 25, "quiet": False}
+            options = {
+                "format": "bestvideo*+bestaudio/best",
+                "outtmpl": template,
+                "noplaylist": True,
+                "restrictfilenames": True,
+                "retries": 2,
+                "fragment_retries": 2,
+                "socket_timeout": 25,
+                "quiet": False,
+            }
             with yt_dlp.YoutubeDL(options) as ydl:
                 info = ydl.extract_info(url, download=True)
                 title = info.get("title", "video")
-                duration = info.get("duration")
             candidates = [p for p in Path(temp).iterdir() if p.is_file()]
             if not candidates:
                 raise RuntimeError("No media file was produced.")
             media = max(candidates, key=lambda p: p.stat().st_size)
-            if media.stat().st_size > MAX_UPLOAD_BYTES:
-                if not info.get("vcodec") and not any(p.suffix.lower() in {".mp4", ".mkv", ".webm", ".mov"} for p in candidates):
-                    raise RuntimeError("Downloaded media exceeds Telegram's 49 MiB limit and cannot be compressed as a video.")
-                media = compress_video(media, duration, temp)
-            deliver(token, chat_id, media, url)
-            print("SUCCESS: delivered " + title)
+            deliver(token, chat_id, media, url, title)
+            print("SUCCESS: original media delivered without transcoding.")
         return 0
     except Exception as exc:
         message = "KHALID DOWNLOADER failed: " + type(exc).__name__ + ": " + str(exc)[:800]

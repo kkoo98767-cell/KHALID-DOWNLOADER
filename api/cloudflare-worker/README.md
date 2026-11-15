@@ -34,7 +34,17 @@ npx wrangler secret put GITHUB_TOKEN
 
 Use a newly generated long random value for `API_SECRET` (at least 32 random bytes). Use the fine-grained GitHub token from step 1 for `GITHUB_TOKEN`.
 
-## 4. Connect the website
+## 4. Configure Cloudflare R2
+
+Create a private R2 bucket for downloads. Create an R2 API token restricted to read and write access for that bucket. In GitHub repository Settings > Secrets and variables > Actions, add:
+- `R2_ACCOUNT_ID`
+- `R2_BUCKET_NAME`
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+
+Add a lifecycle rule to the bucket that deletes objects with the `khalid-downloads/` prefix after 7 days. The Telegram message contains a presigned download link that expires after 5 days. Files larger than Telegram's direct-upload size are stored unchanged; the video is not compressed or transcoded.
+
+## 5. Connect the website
 
 Open the deployed website, choose **Connection settings**, and enter:
 - Worker URL: the exact `https://...workers.dev` URL printed by Wrangler
@@ -42,12 +52,12 @@ Open the deployed website, choose **Connection settings**, and enter:
 
 The allowed browser origin is set to `https://kkoo98767-cell.github.io` in `wrangler.toml`. If you change the website domain, update `ALLOWED_ORIGIN` and redeploy.
 
-## 5. Verify Telegram delivery
+## 6. Verify Telegram delivery
 
 In GitHub repository Settings > Secrets and variables > Actions, create:
 - `TELEGRAM_BOT_TOKEN`: token from Telegram BotFather
 - `TELEGRAM_CHAT_ID`: your destination chat ID
 
-Start a conversation with your bot and send it `/start` before testing. Then submit a public video URL that you own or are authorized to save. The workflow currently limits Telegram uploads to 49 MiB.
+Start a conversation with your bot and send it `/start` before testing. Small files are sent directly to Telegram; large files arrive as a temporary download link.
 
 Never share tokens or API secrets in chat, commit them to the repository, or place them in frontend code.
