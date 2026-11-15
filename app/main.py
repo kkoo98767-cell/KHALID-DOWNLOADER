@@ -1,17 +1,23 @@
+import mimetypes
 import os
 import re
+import secrets
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 from urllib.parse import urlparse
 
+import boto3
 import requests
 import yt_dlp
+from boto3.s3.transfer import TransferConfig
+from botocore.config import Config
 
-STANDARD_API_LIMIT_BYTES = 49 * 1024 * 1024
-LOCAL_API_LIMIT_BYTES = 1990 * 1024 * 1024
-TELEGRAM_API = os.environ.get("TELEGRAM_API_URL", "https://api.telegram.org").rstrip("/")
-LOCAL_API_ENABLED = TELEGRAM_API.startswith("http://127.0.0.1:8081")
+TELEGRAM_API = "https://api.telegram.org"
+TELEGRAM_DIRECT_UPLOAD_LIMIT = 49 * 1024 * 1024
+PRESIGNED_URL_EXPIRES_SECONDS = 5 * 24 * 60 * 60
+R2_KEY_PREFIX = "khalid-downloads"
 
 
 def validate_url(raw):
@@ -22,7 +28,7 @@ def validate_url(raw):
     host = parsed.hostname.lower()
     if host in {"localhost", "127.0.0.1", "::1"} or host.endswith((".local", ".internal")):
         raise ValueError("Local network URLs are not accepted.")
-    if re.search(r"[\\x00-\\x20]", value):
+    if re.search(r"[\x00-\x20]", value):
         raise ValueError("URL contains whitespace or control characters.")
     return value
 
@@ -45,25 +51,78 @@ def notify(token, chat_id, message):
     telegram_call(token, "sendMessage", {"chat_id": chat_id, "text": message[:3900]})
 
 
-def deliver(token, chat_id, media_path, source):
-    file_size = media_path.stat().st_size
-    if LOCAL_API_ENABLED and file_size > LOCAL_API_LIMIT_BYTES:
-        raise RuntimeError("This file exceeds the local Telegram Bot API upload limit of 1990 MiB.")
-    if not LOCAL_API_ENABLED and file_size > STANDARD_API_LIMIT_BYTES:
-        raise RuntimeError(
-            "This file is larger than Telegram's standard Bot API limit. "
-            "Configure TELEGRAM_API_ID and TELEGRAM_API_HASH in GitHub Actions to enable lossless uploads up to 1990 MiB."
-        )
+def r2_download_link(media_path):
+    account_id = os.environ.get("R2_ACCOUNT_ID", "").strip()
+    bucket = os.environ.get("R2_BUCKET_NAME", "").strip()
+    access_key = os.environ.get("R2_ACCESS_KEY_ID", "").strip()
+    secret_key = os.environ.get("R2_SECRET_ACCESS_KEY", "").strip()
+    missing = [
+        name for name, value in {
+            "R2_ACCOUNT_ID": account_id,
+            "R2_BUCKET_NAME": bucket,
+            "R2_ACCESS_KEY_ID": access_key,
+            "R2_SECRET_ACCESS_KEY": secret_key,
+        }.items() if not value
+    ]
+    if missing:
+        raise RuntimeError("Large files need Cloudflare R2. Missing Actions secrets: " + ", ".join(missing))
 
-    method = "sendVideo" if media_path.suffix.lower() in {".mp4", ".mov"} else "sendDocument"
-    field = "video" if method == "sendVideo" else "document"
-    with media_path.open("rb") as stream:
-        telegram_call(
-            token,
-            method,
-            {"chat_id": chat_id, "caption": "KHALID DOWNLOADER | Source: " + source[:700]},
-            {field: (media_path.name, stream)},
-        )
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
+        region_name="auto",
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        config=Config(signature_version="s3v4", connect_timeout=30, read_timeout=900, retries={"max_attempts": 5}),
+    )
+    safe_name = re.sub(r'[^A-Za-z0-9._-]', "_", media_path.name)[:180] or "video"
+    key = f"{R2_KEY_PREFIX}/{secrets.token_hex(16)}/{safe_name}"
+    content_type = mimetypes.guess_type(media_path.name)[0] or "application/octet-stream"
+    ascii_name = re.sub(r'[^A-Za-z0-9._-]', "_", media_path.name)[:180] or "video"
+    encoded_name = quote(media_path.name, safe="")
+    s3.upload_file(
+        str(media_path),
+        bucket,
+        key,
+        ExtraArgs={
+            "ContentType": content_type,
+            "ContentDisposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{encoded_name}",
+        },
+        Config=TransferConfig(
+            multipart_threshold=64 * 1024 * 1024,
+            multipart_chunksize=64 * 1024 * 1024,
+            max_concurrency=4,
+            use_threads=True,
+        ),
+    )
+    return s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": key},
+        ExpiresIn=PRESIGNED_URL_EXPIRES_SECONDS,
+    )
+
+
+def deliver(token, chat_id, media_path, source, title):
+    if media_path.stat().st_size <= TELEGRAM_DIRECT_UPLOAD_LIMIT:
+        method = "sendVideo" if media_path.suffix.lower() in {".mp4", ".mov"} else "sendDocument"
+        field = "video" if method == "sendVideo" else "document"
+        with media_path.open("rb") as stream:
+            telegram_call(
+                token,
+                method,
+                {"chat_id": chat_id, "caption": "KHALID DOWNLOADER | Source: " + source[:700]},
+                {field: (media_path.name, stream)},
+            )
+        return
+
+    link = r2_download_link(media_path)
+    message = (
+        "الفيديو الأصلي جاهز بدون ضغط أو تغيير في الجودة.\n"
+        f"{title[:300]}\n\n"
+        "رابط تنزيل خاص، صالح لمدة 5 أيام:\n"
+        f"{link}"
+    )
+    telegram_call(token, "sendMessage", {"chat_id": chat_id, "text": message})
 
 
 def main():
@@ -94,8 +153,8 @@ def main():
             if not candidates:
                 raise RuntimeError("No media file was produced.")
             media = max(candidates, key=lambda p: p.stat().st_size)
-            deliver(token, chat_id, media, url)
-            print("SUCCESS: delivered original file without transcoding: " + title)
+            deliver(token, chat_id, media, url, title)
+            print("SUCCESS: original media delivered without transcoding.")
         return 0
     except Exception as exc:
         message = "KHALID DOWNLOADER failed: " + type(exc).__name__ + ": " + str(exc)[:800]
