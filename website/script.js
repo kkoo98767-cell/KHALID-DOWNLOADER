@@ -13,9 +13,31 @@ function setProgress(value, label) {
   progressValue.textContent = safe + "%";
   if (label) progressLabel.textContent = label;
 }
-function openSettings() { const s = settings(); $("endpoint").value = s.endpoint; $("secret").value = s.secret; $("setup").showModal(); }
+function openSettings() {
+  const s = settings();
+  $("endpoint").value = s.endpoint; $("secret").value = s.secret;
+  $("setup-error").hidden = true;
+  $("setup").hidden = false;
+  document.body.style.overflow = "hidden";
+  $("endpoint").focus();
+}
+function closeSettings() { $("setup").hidden = true; document.body.style.overflow = ""; }
 $("open-settings").addEventListener("click", openSettings);
-$("save").addEventListener("click", event => { const endpoint = $("endpoint").value.trim(); const secret = $("secret").value.trim(); if (!endpoint || !secret) { event.preventDefault(); return; } localStorage.setItem("kd_endpoint", endpoint.replace(/\/$/)); localStorage.setItem("kd_secret", secret); show("Settings saved in this browser.", "success"); });
+$("cancel").addEventListener("click", closeSettings);
+$("setup").addEventListener("click", e => { if (e.target === $("setup")) closeSettings(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeSettings(); });
+$("save").addEventListener("click", () => {
+  const endpoint = $("endpoint").value.trim().replace(/\\/+$/, "");
+  const secret = $("secret").value.trim();
+  const err = $("setup-error");
+  try { const u = new URL(endpoint); if (u.protocol !== "https:") throw Error(); }
+  catch { err.textContent = "Enter a valid https:// Worker URL."; err.hidden = false; return; }
+  if (!secret) { err.textContent = "Enter the API secret."; err.hidden = false; return; }
+  localStorage.setItem("kd_endpoint", endpoint);
+  localStorage.setItem("kd_secret", secret);
+  closeSettings();
+  show("Settings saved in this browser.", "success");
+});
 $("paste").addEventListener("click", async () => { try { $("url").value = await navigator.clipboard.readText(); } catch { show("Clipboard blocked. Paste the link manually.", "error"); } });
 $("submit").addEventListener("click", async () => {
   const s = settings();
