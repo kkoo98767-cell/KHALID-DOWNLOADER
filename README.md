@@ -17,10 +17,10 @@ In Settings > Secrets and variables > Actions, create:
 - TELEGRAM_BOT_TOKEN: token created through Telegram BotFather.
 - TELEGRAM_CHAT_ID: destination chat ID. Start the bot and send it a message first.
 - R2_ACCOUNT_ID: Cloudflare account ID.
-- R2_BUCKET_NAME: name of a private R2 bucket.
+- R2_BUCKET_NAME: name of the private bucket `khalid-downloader-files`.
 - R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY: R2 API credentials restricted to this bucket.
 
-Create an R2 bucket, then create an R2 API token with read and write access to that bucket. Add a lifecycle rule for prefix `khalid-downloads/` to delete objects after 7 days. The Telegram link is private to anyone who has it and expires after 5 days. The original media is not re-encoded or compressed.
+Create the R2 bucket and an R2 API token with read and write access restricted to it. Large files remain in R2 for about one hour: the Telegram link expires after one hour and the Cloudflare Worker removes expired objects every five minutes. Add an R2 lifecycle rule for the `khalid-downloads/` prefix to expire objects after one day as a cleanup backstop. The original media is not re-encoded or compressed.
 
 ## Cloudflare Worker
 Deploy api/cloudflare-worker using Wrangler. Configure Worker secrets API_SECRET and GITHUB_TOKEN. Use a fine-grained GitHub token restricted to this repository with Actions read/write and metadata read-only. Set ALLOWED_ORIGIN to the exact HTTPS website origin. Never put the GitHub token or R2 credentials in frontend code or an iPhone Shortcut.
