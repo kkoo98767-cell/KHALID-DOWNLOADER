@@ -2,6 +2,7 @@ import mimetypes
 import os
 import re
 import secrets
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -49,6 +50,48 @@ def telegram_call(token, method, data=None, files=None):
 
 def notify(token, chat_id, message):
     telegram_call(token, "sendMessage", {"chat_id": chat_id, "text": message[:3900]})
+
+
+def probe_duration(media_path):
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(media_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if result.returncode:
+        detail = (result.stderr or "unknown media error").strip()[-400:]
+        raise RuntimeError("The completed download is not a readable media file: " + detail)
+    try:
+        duration = float(result.stdout.strip())
+    except (TypeError, ValueError):
+        raise RuntimeError("Could not read the completed video's duration.") from None
+    if duration <= 0:
+        raise RuntimeError("The completed video has no playable duration.")
+    return duration
+
+
+def validate_duration(media_path, source_duration):
+    actual = probe_duration(media_path)
+    try:
+        expected = float(source_duration)
+    except (TypeError, ValueError):
+        expected = 0
+    if expected > 2:
+        tolerance = max(2.0, expected * 0.15)
+        if actual + tolerance < expected:
+            raise RuntimeError(
+                f"Incomplete download detected: source is about {expected:.1f}s, "
+                f"but the final file is only {actual:.1f}s."
+            )
+    return actual
 
 
 def r2_download_link(media_path):
@@ -146,13 +189,19 @@ def main():
                 "socket_timeout": 25,
                 "quiet": False,
             }
+            completed_paths = []
+            options["post_hooks"] = [completed_paths.append]
             with yt_dlp.YoutubeDL(options) as ydl:
                 info = ydl.extract_info(url, download=True)
                 title = info.get("title", "video")
-            candidates = [p for p in Path(temp).iterdir() if p.is_file()]
-            if not candidates:
-                raise RuntimeError("No media file was produced.")
-            media = max(candidates, key=lambda p: p.stat().st_size)
+                final_path = completed_paths[-1] if completed_paths else info.get("filepath")
+                if not final_path:
+                    final_path = ydl.prepare_filename(info)
+            media = Path(final_path)
+            if not media.is_file():
+                raise RuntimeError("yt-dlp finished without its final merged video file.")
+            duration = validate_duration(media, info.get("duration"))
+            print(f"Validated final video: {duration:.1f} seconds, {media.stat().st_size} bytes.")
             deliver(token, chat_id, media, url, title)
             print("SUCCESS: original media delivered without transcoding.")
         return 0
