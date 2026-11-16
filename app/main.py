@@ -73,7 +73,7 @@ def probe_media(media_path):
         [
             "ffprobe",
             "-v", "error",
-            "-show_entries", "format=duration:stream=codec_type,codec_name,duration,width,height,nb_frames",
+            "-show_entries", "format=duration:stream=index,codec_type,codec_name,duration,start_time,width,height,nb_frames,sample_rate,channels,avg_frame_rate:stream_disposition=default",
             "-of", "json",
             str(media_path),
         ],
@@ -123,25 +123,98 @@ def validate_duration(media_path, source_duration):
     return actual
 
 
+def decode_audio(media_path, stream_index):
+    return subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-xerror", "-nostdin",
+         "-i", str(media_path), "-map", f"0:{stream_index}", "-vn", "-f", "null", "-"],
+        capture_output=True, text=True, timeout=900, check=False,
+    )
+
+
+def select_audio_stream(media_path, metadata):
+    candidates = [stream for stream in metadata["streams"] if stream.get("codec_type") == "audio"]
+    candidates.sort(key=lambda stream: (-int(stream.get("disposition", {}).get("default", 0)), stream["index"]))
+    for stream in candidates:
+        if decode_audio(media_path, stream["index"]).returncode == 0:
+            print(f"Selected fully readable audio stream {stream['index']}.")
+            return stream
+        print(f"Rejected unreadable audio stream {stream['index']}.")
+    if candidates:
+        raise RuntimeError("The source audio is damaged; no distorted or silent replacement was sent.")
+    return None
+
+
+def audio_fingerprint(media_path, stream_index):
+    result = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+         "-i", str(media_path), "-map", f"0:{stream_index}", "-vn", "-c:a", "copy",
+         "-f", "hash", "-hash", "sha256", "-"],
+        capture_output=True, text=True, timeout=900, check=False,
+    )
+    fingerprint = result.stdout.strip()
+    if result.returncode or not re.fullmatch(r"SHA256=[0-9a-fA-F]{64}", fingerprint):
+        raise RuntimeError("Could not verify the original audio data.")
+    return fingerprint
+
+
+def mark_normal_playback(media_path, video):
+    try:
+        numerator, denominator = str(video.get("avg_frame_rate", "0/1")).split("/")
+        frame_rate = float(numerator) / float(denominator)
+    except (ValueError, ZeroDivisionError):
+        frame_rate = 0
+    if frame_rate <= 60:
+        return
+    config_path = Path(__file__).with_name("full-frame-rate.config")
+    result = subprocess.run(
+        ["exiftool", "-config", str(config_path), "-overwrite_original",
+         "-Keys:FullFrameRatePlaybackIntent=1", str(media_path)],
+        capture_output=True, text=True, timeout=180, check=False,
+    )
+    if result.returncode:
+        raise RuntimeError("Could not set normal-speed playback for the phone album.")
+    result = subprocess.run(
+        ["exiftool", "-n", "-s3", "-Keys:FullFrameRatePlaybackIntent", str(media_path)],
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    if result.returncode or result.stdout.strip() != "1":
+        raise RuntimeError("Normal-speed playback metadata could not be verified.")
+    print(f"Normal-speed album playback metadata verified; all {frame_rate:g} fps preserved.")
+
+
 def prepare_delivery_media(media_path, source_duration):
     validate_duration(media_path, source_duration)
-    if media_path.suffix.lower() not in {".mp4", ".mov", ".m4v"}:
-        prepared = media_path
+    metadata, video = probe_media(media_path)
+    selected_audio = select_audio_stream(media_path, metadata)
+    is_mp4 = media_path.suffix.lower() in {".mp4", ".mov", ".m4v"}
+    prepared = media_path.with_name(media_path.stem + ("-ready.mp4" if is_mp4 else "-ready.mkv"))
+    command = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+        "-i", str(media_path), "-map", "0:v:0",
+    ]
+    if selected_audio:
+        command.extend(["-map", f"0:{selected_audio['index']}", "-disposition:a:0", "default"])
     else:
-        _, video = probe_media(media_path)
-        prepared = media_path.with_name(media_path.stem + "-ready.mp4")
-        command = [
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-            "-i", str(media_path), "-map", "0:v:0", "-map", "0:a?",
-            "-map_metadata", "0", "-c", "copy", "-movflags", "+faststart",
-            "-avoid_negative_ts", "make_zero",
-        ]
+        command.append("-an")
+    command.extend(["-map_metadata", "0", "-c", "copy"])
+    if is_mp4:
+        command.extend(["-movflags", "+faststart"])
         if video.get("codec_name") == "hevc":
             command.extend(["-tag:v", "hvc1"])
-        command.append(str(prepared))
-        result = subprocess.run(command, capture_output=True, text=True, timeout=900, check=False)
-        if result.returncode:
-            raise RuntimeError("Could not prepare the original video for playback without re-encoding.")
+    command.append(str(prepared))
+    result = subprocess.run(command, capture_output=True, text=True, timeout=900, check=False)
+    if result.returncode:
+        raise RuntimeError("Could not prepare the original video for playback without re-encoding.")
+    if is_mp4:
+        mark_normal_playback(prepared, video)
+    if selected_audio:
+        output_metadata, _ = probe_media(prepared)
+        output_audio = next(stream for stream in output_metadata["streams"] if stream.get("codec_type") == "audio")
+        if decode_audio(prepared, output_audio["index"]).returncode:
+            raise RuntimeError("The prepared audio is unreadable; no file was sent.")
+        if prepared != media_path and audio_fingerprint(media_path, selected_audio["index"]) != audio_fingerprint(prepared, output_audio["index"]):
+            raise RuntimeError("The prepared audio differs from the original audio data.")
+        print("Audio validated: clean source track preserved without re-encoding.")
     duration = validate_duration(prepared, source_duration)
     # Decode every video frame: metadata alone cannot establish that the full clip plays.
     result = subprocess.run(
