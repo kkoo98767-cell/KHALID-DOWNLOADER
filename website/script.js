@@ -125,6 +125,25 @@ else show("Ready. Paste a video link to begin.");
     window.clearTimeout(timer);
     if (!userPaused && !document.hidden) timer = window.setTimeout(changeClip, 35000 + Math.floor(Math.random() * 15000));
   }
+  function portraitViewport() {
+    return window.innerWidth <= 720 || window.innerHeight > window.innerWidth;
+  }
+  function chooseClip() {
+    // Start with the closest native aspect ratio, then keep every scene in rotation.
+    if (lastClip < 0) return portraitViewport() ? 4 : 1;
+    const weights = portraitViewport() ? [1.5, 1, 1.25, 1.25, 6] : [2, 5, 2.5, 2.5, 0.65];
+    const choices = weights.map((weight, index) => ({ weight: index === lastClip ? 0 : weight, index }));
+    let pick = Math.random() * choices.reduce((total, choice) => total + choice.weight, 0);
+    for (const choice of choices) {
+      pick -= choice.weight;
+      if (pick < 0) return choice.index;
+    }
+    return choices.find(choice => choice.weight > 0).index;
+  }
+  function positionClip(index) {
+    video.style.objectPosition = index === 4 ? "50% 42%" : portraitViewport() ? "57% center" : "50% 48%";
+  }
+  window.addEventListener("resize", () => positionClip(lastClip), { passive: true });
   function decodeVideo(encoded) {
     const binary = atob(encoded.trim());
     const chunks = [];
@@ -141,8 +160,8 @@ else show("Ready. Paste a video link to begin.");
     loading = true;
     window.clearTimeout(timer);
     $("scene-next").disabled = true;
-    const choices = clips.map((_, i) => i).filter(i => i !== lastClip);
-    const next = choices[Math.floor(Math.random() * choices.length)];
+    const next = chooseClip();
+    positionClip(next);
     let nextUrl = "";
     try {
       const response = await fetch(clips[next], { cache: "force-cache" });
