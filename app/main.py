@@ -62,7 +62,10 @@ def telegram_call(token, method, data=None, files=None):
 
 
 def notify(token, chat_id, message):
-    telegram_call(token, "sendMessage", {"chat_id": chat_id, "text": message[:3900]})
+    telegram_call(token, "sendMessage", {
+        "chat_id": chat_id,
+        "text": message[:3400] + "\n\n" + storage_usage_footer(),
+    })
 
 
 def probe_media(media_path):
@@ -176,7 +179,7 @@ def verify_download_link(link, expected_size, expected_hash):
     print(f"R2 round-trip verified: {size} bytes; SHA-256 matches the original file.")
 
 
-def r2_download_link(media_path):
+def r2_client_and_bucket(*, read_timeout=900, retries=5):
     account_id = os.environ.get("R2_ACCOUNT_ID", "").strip()
     bucket = os.environ.get("R2_BUCKET_NAME", "").strip()
     access_key = os.environ.get("R2_ACCESS_KEY_ID", "").strip()
@@ -190,7 +193,7 @@ def r2_download_link(media_path):
         }.items() if not value
     ]
     if missing:
-        raise RuntimeError("Large files need Cloudflare R2. Missing Actions secrets: " + ", ".join(missing))
+        raise RuntimeError("Cloudflare R2 settings are missing: " + ", ".join(missing))
 
     s3 = boto3.client(
         "s3",
@@ -199,14 +202,65 @@ def r2_download_link(media_path):
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
         config=Config(
-            signature_version="s3v4", connect_timeout=30, read_timeout=900,
-            retries={"max_attempts": 5},
+            signature_version="s3v4", connect_timeout=15, read_timeout=read_timeout,
+            retries={"max_attempts": retries},
             # Avoid SDK optional aws-chunked checksum trailers on S3-compatible storage.
             # Integrity is independently checked against the exact signed GET below.
             request_checksum_calculation="when_required",
             response_checksum_validation="when_required",
         ),
     )
+    return s3, bucket
+
+
+def format_size(size):
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1000 or unit == "TB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.2f} {unit}"
+        value /= 1000
+
+
+def storage_usage_footer():
+    try:
+        s3, bucket = r2_client_and_bucket(read_timeout=20, retries=2)
+        total_bytes = 0
+        for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket):
+            total_bytes += sum(item["Size"] for item in page.get("Contents", []))
+        value = format_size(total_bytes)
+    except Exception:
+        # An unavailable usage counter must not prevent delivery or pretend the bucket is empty.
+        value = "تعذرت قراءتها الآن"
+        print("R2 storage usage unavailable; delivering without a numeric total.")
+    return "🗄 مساحة السيرفر (R2): " + value
+
+
+DOWNLOAD_OPENERS = (
+    "جاهز لك، استمتع بالمشاهدة 🎬",
+    "تم التحميل، مقطعك صار جاهز ✨",
+    "مقطعك وصل، مشاهدة ممتعة 🍿",
+    "خلصنا التحميل، هذا مقطعك 🎞",
+)
+
+
+def download_message(title, media_size, footer, *, link=None, source=None):
+    clean_title = re.sub(r"\s+", " ", str(title or "مقطع فيديو")).strip()[:150]
+    lines = [
+        secrets.choice(DOWNLOAD_OPENERS),
+        "", clean_title,
+        "🔊 الصورة والصوت بجودة المصدر، بدون إعادة ضغط.",
+        "📦 حجم الملف: " + format_size(media_size),
+    ]
+    if link:
+        lines.extend(["", "🔗 رابط التنزيل الخاص:", link, "", "⏳ الرابط صالح لمدة ساعة. احفظ المقطع قبل انتهاء الوقت."])
+    elif source:
+        lines.extend(["", "🔗 المصدر: " + source[:200]])
+    lines.extend(["", "──────────────", footer])
+    return "\n".join(lines)
+
+
+def r2_download_link(media_path):
+    s3, bucket = r2_client_and_bucket()
     safe_name = re.sub(r'[^A-Za-z0-9._-]', "_", media_path.name)[:180] or "video"
     key = f"{R2_KEY_PREFIX}/{secrets.token_hex(16)}/{safe_name}"
     content_type = mimetypes.guess_type(media_path.name)[0] or "application/octet-stream"
@@ -249,25 +303,23 @@ def r2_download_link(media_path):
 
 
 def deliver(token, chat_id, media_path, source, title):
-    if media_path.stat().st_size <= TELEGRAM_DIRECT_UPLOAD_LIMIT:
+    media_size = media_path.stat().st_size
+    if media_size <= TELEGRAM_DIRECT_UPLOAD_LIMIT:
         method = "sendVideo" if media_path.suffix.lower() in {".mp4", ".mov"} else "sendDocument"
         field = "video" if method == "sendVideo" else "document"
+        caption = download_message(title, media_size, storage_usage_footer(), source=source)
         with media_path.open("rb") as stream:
             telegram_call(
                 token,
                 method,
-                {"chat_id": chat_id, "caption": "KHALID DOWNLOADER | Source: " + source[:700]},
+                {"chat_id": chat_id, "caption": caption},
                 {field: (media_path.name, stream)},
             )
         return
 
     link = r2_download_link(media_path)
-    message = (
-        "الفيديو الأصلي جاهز بدون ضغط أو تغيير في الجودة.\n"
-        f"{title[:300]}\n\n"
-        "رابط تنزيل خاص، صالح لمدة ساعة واحدة:\n"
-        f"{link}"
-    )
+    # Measure after upload, so this clip is included in the reported bucket total.
+    message = download_message(title, media_size, storage_usage_footer(), link=link)
     telegram_call(token, "sendMessage", {"chat_id": chat_id, "text": message})
 
 
