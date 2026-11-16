@@ -21,11 +21,20 @@ function openSettings() {
   document.body.style.overflow = "hidden";
   $("endpoint").focus();
 }
-function closeSettings() { $("setup").hidden = true; document.body.style.overflow = ""; }
+function closeSettings() { $("setup").hidden = true; document.body.style.overflow = ""; $("open-settings").focus(); }
 $("open-settings").addEventListener("click", openSettings);
 $("cancel").addEventListener("click", closeSettings);
 $("setup").addEventListener("click", e => { if (e.target === $("setup")) closeSettings(); });
-document.addEventListener("keydown", e => { if (e.key === "Escape") closeSettings(); });
+document.addEventListener("keydown", e => {
+  if ($("setup").hidden) return;
+  if (e.key === "Escape") closeSettings();
+  if (e.key === "Tab") {
+    const fields = [...$("setup").querySelectorAll("input,button")].filter(el => !el.disabled);
+    const first = fields[0], last = fields[fields.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
+});
 $("save").addEventListener("click", () => {
   const endpoint = $("endpoint").value.trim().replace(/\/+$/, "");
   const secret = $("secret").value.trim();
@@ -89,67 +98,116 @@ $("submit").addEventListener("click", async () => {
     }, 1600);
   }
 });
-if (!settings().endpoint) show("Deploy the Worker, then add its URL and API secret in Connection settings.");
+$("url").addEventListener("keydown", e => {
+  if (e.key === "Enter" && !button.disabled) button.click();
+});
+if (!settings().endpoint || !settings().secret) show("Add your connection settings to get started.");
+else show("Ready. Paste a video link to begin.");
 
 
-// Rotate through the five user-provided knight clips without loading them all at once.
+// Play the original clip bytes. No re-encoding or lower-resolution variants.
 (() => {
-  const video = document.getElementById("knight-video");
+  const video = $("knight-video");
   const scene = video?.closest(".scene-art");
   if (!video || !scene) return;
+  const clips = Array.from({ length: 5 }, (_, i) => "media/clip-" + String(i + 1).padStart(2, "0") + ".mp4.b64");
+  const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  let lastClip = -1, activeUrl = "", timer = 0, loading = false;
+  let userPaused = motion.matches;
+  video.muted = true;
 
-  const clips = [
-    "media/clip-01.mp4.b64",
-    "media/clip-02.mp4.b64",
-    "media/clip-03.mp4.b64",
-    "media/clip-04.mp4.b64",
-    "media/clip-05.mp4.b64"
-  ];
-  let lastClip = -1;
-  let activeUrl = "";
-
+  function updatePause() {
+    $("scene-pause").setAttribute("aria-pressed", String(userPaused));
+    $("scene-pause").setAttribute("aria-label", userPaused ? "Play background video" : "Pause background video");
+    $("scene-pause-icon").textContent = userPaused ? "▷" : "Ⅱ";
+  }
+  function schedule() {
+    window.clearTimeout(timer);
+    if (!userPaused && !document.hidden) timer = window.setTimeout(changeClip, 35000 + Math.floor(Math.random() * 15000));
+  }
   function decodeVideo(encoded) {
     const binary = atob(encoded.trim());
     const chunks = [];
-    const chunkSize = 32768;
-    for (let offset = 0; offset < binary.length; offset += chunkSize) {
-      const end = Math.min(offset + chunkSize, binary.length);
+    for (let offset = 0; offset < binary.length; offset += 32768) {
+      const end = Math.min(offset + 32768, binary.length);
       const bytes = new Uint8Array(end - offset);
       for (let i = offset; i < end; i++) bytes[i - offset] = binary.charCodeAt(i);
       chunks.push(bytes);
     }
     return new Blob(chunks, { type: "video/mp4" });
   }
-
   async function changeClip() {
-    const choices = clips.map((_, index) => index).filter(index => index !== lastClip);
+    if (loading) return;
+    loading = true;
+    window.clearTimeout(timer);
+    $("scene-next").disabled = true;
+    const choices = clips.map((_, i) => i).filter(i => i !== lastClip);
     const next = choices[Math.floor(Math.random() * choices.length)];
+    let nextUrl = "";
     try {
       const response = await fetch(clips[next], { cache: "force-cache" });
-      if (!response.ok) throw new Error("Clip could not be loaded");
-      const blob = decodeVideo(await response.text());
-      const nextUrl = URL.createObjectURL(blob);
-      video.classList.remove("is-visible");
-      scene.classList.remove("has-video");
-      video.pause();
+      if (!response.ok) throw Error("Clip unavailable");
+      nextUrl = URL.createObjectURL(decodeVideo(await response.text()));
+      const ready = new Promise((resolve, reject) => {
+        let timeout;
+        const cleanup = () => { window.clearTimeout(timeout); video.removeEventListener("loadeddata", loaded); video.removeEventListener("error", failed); };
+        const loaded = () => { cleanup(); resolve(); };
+        const failed = () => { cleanup(); reject(Error("Clip unavailable")); };
+        video.addEventListener("loadeddata", loaded);
+        video.addEventListener("error", failed);
+        timeout = window.setTimeout(failed, 20000);
+      });
       video.src = nextUrl;
       video.load();
-      await new Promise((resolve, reject) => {
-        video.addEventListener("loadeddata", resolve, { once: true });
-        video.addEventListener("error", reject, { once: true });
-      });
-      await video.play();
+      await ready;
+      if (!userPaused && !document.hidden) {
+        try { await video.play(); }
+        catch { userPaused = true; updatePause(); }
+      }
       const previousUrl = activeUrl;
       activeUrl = nextUrl;
+      nextUrl = "";
       lastClip = next;
       video.classList.add("is-visible");
       scene.classList.add("has-video");
-      if (previousUrl) window.setTimeout(() => URL.revokeObjectURL(previousUrl), 1200);
-      window.setTimeout(changeClip, 30000 + Math.floor(Math.random() * 16000));
+      $("scene-number").textContent = "SCENE " + String(next + 1).padStart(2, "0") + " / 05";
+      if (previousUrl) URL.revokeObjectURL(previousUrl);
     } catch {
-      window.setTimeout(changeClip, 12000);
+      if (nextUrl) URL.revokeObjectURL(nextUrl);
+      if (!activeUrl) {
+        video.classList.remove("is-visible");
+        scene.classList.remove("has-video");
+      }
+    } finally {
+      loading = false;
+      $("scene-next").disabled = false;
+      schedule();
     }
   }
-
-  window.setTimeout(changeClip, 700);
+  $("scene-pause").addEventListener("click", async () => {
+    userPaused = !userPaused;
+    updatePause();
+    if (userPaused) { video.pause(); window.clearTimeout(timer); }
+    else {
+      if (activeUrl) {
+        try { await video.play(); }
+        catch { userPaused = true; updatePause(); }
+        schedule();
+      } else changeClip();
+    }
+  });
+  $("scene-next").addEventListener("click", changeClip);
+  document.addEventListener("visibilitychange", async () => {
+    if (document.hidden) { video.pause(); window.clearTimeout(timer); }
+    else if (!userPaused) {
+      if (activeUrl) {
+        try { await video.play(); }
+        catch { userPaused = true; updatePause(); }
+        schedule();
+      } else changeClip();
+    }
+  });
+  window.addEventListener("pagehide", () => { window.clearTimeout(timer); video.pause(); });
+  updatePause();
+  changeClip();
 })();
