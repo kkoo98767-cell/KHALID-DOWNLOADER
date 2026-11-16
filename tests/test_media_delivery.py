@@ -7,7 +7,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from app.main import probe_duration, r2_download_link, validate_duration, verify_download_link
+import requests
+
+from app.main import probe_duration, r2_download_link, telegram_call, validate_duration, verify_download_link
 
 
 def media_response(*chunks):
@@ -18,6 +20,15 @@ def media_response(*chunks):
 
 
 class MediaDeliveryTests(unittest.TestCase):
+    @patch("app.main.time.sleep")
+    @patch("app.main.requests.post")
+    def test_temporary_telegram_disconnect_is_retried(self, post, sleep):
+        response = MagicMock()
+        response.json.return_value = {"ok": True, "result": {"message_id": 1}}
+        post.side_effect = [requests.ConnectionError("temporary disconnect"), response]
+        self.assertTrue(telegram_call("test", "sendMessage", {"chat_id": "test", "text": "ready"})["ok"])
+        self.assertEqual(post.call_count, 2)
+
     @patch("app.main.subprocess.run")
     def test_short_video_is_not_hidden_by_normal_audio_duration(self, run):
         run.return_value = subprocess.CompletedProcess([], 0, json.dumps({

@@ -8,6 +8,7 @@ import secrets
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from urllib.parse import quote
 from urllib.parse import urlparse
@@ -38,13 +39,22 @@ def validate_url(raw):
 
 
 def telegram_call(token, method, data=None, files=None):
-    response = requests.post(
-        f"{TELEGRAM_API}/bot{token}/{method}",
-        data=data,
-        files=files,
-        timeout=(30, 900),
-    )
-    response.raise_for_status()
+    for attempt in range(3):
+        if files:
+            for _, stream in files.values():
+                stream.seek(0)
+        try:
+            response = requests.post(
+                f"{TELEGRAM_API}/bot{token}/{method}",
+                data=data, files=files, timeout=(30, 900),
+            )
+            response.raise_for_status()
+            break
+        except requests.RequestException as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if attempt == 2 or (status is not None and status != 429 and status < 500):
+                raise
+            time.sleep(2 ** (attempt + 1))
     payload = response.json()
     if not payload.get("ok"):
         raise RuntimeError(f"Telegram API error: {payload}")
