@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import math
 import mimetypes
@@ -10,6 +11,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import parse_qs
 from urllib.parse import quote
 from urllib.parse import urlparse
 
@@ -23,6 +25,8 @@ TELEGRAM_API = "https://api.telegram.org"
 TELEGRAM_DIRECT_UPLOAD_LIMIT = 49 * 1024 * 1024
 PRESIGNED_URL_EXPIRES_SECONDS = 60 * 60
 R2_KEY_PREFIX = "khalid-downloads"
+YOUTUBE_SESSION_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
+YOUTUBE_COOKIE_DOMAINS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"}
 
 
 def validate_url(raw):
@@ -36,6 +40,52 @@ def validate_url(raw):
     if re.search(r"[\x00-\x20]", value):
         raise ValueError("URL contains whitespace or control characters.")
     return value
+
+
+def youtube_authentication(url, session):
+    parts = urlparse(url)
+    if not session or parts.scheme != "https" or parts.hostname not in YOUTUBE_SESSION_HOSTS:
+        return None
+    if parts.username or parts.password:
+        return None
+
+    if parts.hostname == "youtu.be":
+        video_id = parts.path.strip("/")
+    elif parts.path == "/watch":
+        video_id = parse_qs(parts.query).get("v", [""])[0]
+    else:
+        video_path = re.fullmatch(r"/(?:shorts|live|embed)/([\w-]+)/*", parts.path, re.ASCII)
+        video_id = video_path[1] if video_path else ""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+        return None
+
+    rows = session.lstrip("\ufeff").splitlines()
+    if not rows or not rows[0].startswith(("# Netscape HTTP Cookie File", "# HTTP Cookie File")):
+        raise ValueError("ملف جلسة يوتيوب يجب أن يكون بصيغة Netscape.")
+    cookies = []
+    for row in rows[1:]:
+        if not row or (row.startswith("#") and not row.startswith("#HttpOnly_")):
+            continue
+        fields = row.removeprefix("#HttpOnly_").split("\t")
+        if len(fields) != 7:
+            raise ValueError("ملف جلسة يوتيوب يحتوي على سطر غير صالح.")
+        domain, include_subdomains, path, secure, expires, name, _ = fields
+        domain = domain.lower()
+        if domain.removeprefix(".") not in YOUTUBE_COOKIE_DOMAINS:
+            continue
+        fields[0] = domain
+        if (include_subdomains != ("TRUE" if domain.startswith(".") else "FALSE")
+                or secure not in {"TRUE", "FALSE"} or not path.startswith("/")
+                or not re.fullmatch(r"[0-9]*", expires) or not name):
+            raise ValueError("ملف جلسة يوتيوب يحتوي على سطر غير صالح.")
+        fields[3] = "TRUE"  # Pass login cookies only over HTTPS.
+        cookies.append("\t".join(fields))
+    if not cookies:
+        raise ValueError("ملف الجلسة لا يحتوي على بيانات خاصة بيوتيوب.")
+    return (
+        f"https://www.youtube.com/watch?v={video_id}",
+        io.StringIO("# Netscape HTTP Cookie File\n" + "\n".join(cookies) + "\n"),
+    )
 
 
 def telegram_call(token, method, data=None, files=None):
@@ -400,11 +450,18 @@ def main():
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     raw_url = os.environ.get("VIDEO_URL", "").strip()
+    youtube_session = os.environ.pop("YOUTUBE_COOKIES", "")
+    cookies = None
     if not token or not chat_id:
         print("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID secrets.", file=sys.stderr)
         return 2
     try:
         url = validate_url(raw_url)
+        download_url = url
+        authentication = youtube_authentication(url, youtube_session)
+        del youtube_session
+        if authentication is not None:
+            download_url, cookies = authentication
         with tempfile.TemporaryDirectory(prefix="khalid-downloader-") as temp:
             template = str(Path(temp) / "%(title).100B-%(id)s.%(ext)s")
             options = {
@@ -420,12 +477,19 @@ def main():
             }
             completed_paths = []
             options["post_hooks"] = [completed_paths.append]
-            with yt_dlp.YoutubeDL(options) as ydl:
-                info = ydl.extract_info(url, download=True)
-                title = info.get("title", "video")
-                final_path = completed_paths[-1] if completed_paths else info.get("filepath")
-                if not final_path:
-                    final_path = ydl.prepare_filename(info)
+            if cookies is not None:
+                options["cookiefile"] = cookies
+                options["allowed_extractors"] = ["youtube"]
+            try:
+                with yt_dlp.YoutubeDL(options) as ydl:
+                    info = ydl.extract_info(download_url, download=True)
+                    title = info.get("title", "video")
+                    final_path = completed_paths[-1] if completed_paths else info.get("filepath")
+                    if not final_path:
+                        final_path = ydl.prepare_filename(info)
+            finally:
+                if cookies is not None:
+                    cookies.close()
             media = Path(final_path)
             if not media.is_file():
                 raise RuntimeError("yt-dlp finished without its final merged video file.")
@@ -443,7 +507,8 @@ def main():
             if "[youtube]" in detail and "sign in to confirm" in detail:
                 notice = (
                     "يوتيوب طلب تسجيل الدخول للتحقق قبل تنزيل هذا المقطع. "
-                    "تعذّر تنزيله من السيرفر."
+                    + ("جلسة الحساب لم تُقبل من السيرفر." if cookies is not None
+                       else "لم تُضف جلسة يوتيوب إلى السيرفر بعد.")
                 )
         try:
             notify(token, chat_id, notice)
