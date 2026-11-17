@@ -27,6 +27,17 @@ jobs:
       - uses: actions/checkout@v4
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
+      - name: Prepare original background video files
+        run: |
+          python3 - <<'PY'
+          import base64
+          from pathlib import Path
+
+          for source in Path("website/media").glob("*.mp4.b64"):
+              encoded = b"".join(source.read_bytes().split())
+              source.with_suffix("").write_bytes(base64.b64decode(encoded, validate=True))
+              source.unlink()
+          PY
       - name: Upload website
         uses: actions/upload-pages-artifact@v3
         with:

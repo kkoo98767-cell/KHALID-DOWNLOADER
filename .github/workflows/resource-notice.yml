@@ -1,0 +1,46 @@
+name: Telegram resource notice
+
+on:
+  workflow_dispatch:
+    inputs:
+      notice:
+        description: Arabic text for the owner's resource alert
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Deliver the resource alert
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RESOURCE_NOTICE: ${{ inputs.notice }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from urllib.request import Request, urlopen
+
+          token = os.environ["TELEGRAM_BOT_TOKEN"]
+          data = json.dumps({
+              "chat_id": os.environ["TELEGRAM_CHAT_ID"],
+              "text": os.environ["RESOURCE_NOTICE"][:3000],
+              "link_preview_options": {"is_disabled": True},
+          }).encode()
+          request = Request(
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              data=data,
+              headers={"Content-Type": "application/json"},
+          )
+          try:
+              with urlopen(request, timeout=15) as response:
+                  if json.load(response).get("ok") is not True:
+                      raise ValueError()
+          except Exception:
+              raise SystemExit("Telegram did not confirm the resource notification.") from None
+          PY

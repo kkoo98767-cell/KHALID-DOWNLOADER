@@ -7,9 +7,15 @@ on:
         description: Public media URL you own or are authorized to save
         required: true
         type: string
+      verify_r2_link:
+        description: Smoke-test a guarded download with HEAD and one-byte Range
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   download:
@@ -36,6 +42,9 @@ jobs:
       - name: Download original and deliver through Telegram or R2 link
         env:
           VIDEO_URL: ${{ inputs.url }}
+          VERIFY_R2_LINK: ${{ inputs.verify_r2_link }}
+          PYTHONUNBUFFERED: "1"
+          RESOURCE_API_URL: https://khalid-downloader-api.kkoo98767.workers.dev
           YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

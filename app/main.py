@@ -1,30 +1,20 @@
-import hashlib
 import io
 import json
 import math
-import mimetypes
 import os
 import re
-import secrets
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
 from urllib.parse import parse_qs
-from urllib.parse import quote
 from urllib.parse import urlparse
 
-import boto3
-import requests
 import yt_dlp
-from boto3.s3.transfer import TransferConfig
-from botocore.config import Config
 
-TELEGRAM_API = "https://api.telegram.org"
-TELEGRAM_DIRECT_UPLOAD_LIMIT = 49 * 1024 * 1024
-PRESIGNED_URL_EXPIRES_SECONDS = 60 * 60
-R2_KEY_PREFIX = "khalid-downloads"
+from .delivery import DeliveryError, DownloadGuard, ResourceClient, deliver, telegram_call
+
 YOUTUBE_SESSION_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
 YOUTUBE_COOKIE_DOMAINS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"}
 ORIGINAL_FORMAT = "bestvideo*+bestaudio/best"
@@ -92,36 +82,6 @@ def youtube_authentication(url, session):
         f"https://www.youtube.com/watch?v={video_id}",
         io.StringIO("# Netscape HTTP Cookie File\n" + "\n".join(cookies) + "\n"),
     )
-
-
-def telegram_call(token, method, data=None, files=None):
-    for attempt in range(3):
-        if files:
-            for _, stream in files.values():
-                stream.seek(0)
-        try:
-            response = requests.post(
-                f"{TELEGRAM_API}/bot{token}/{method}",
-                data=data, files=files, timeout=(30, 900),
-            )
-            response.raise_for_status()
-            break
-        except requests.RequestException as exc:
-            status = exc.response.status_code if exc.response is not None else None
-            if attempt == 2 or (status is not None and status != 429 and status < 500):
-                raise
-            time.sleep(2 ** (attempt + 1))
-    payload = response.json()
-    if not payload.get("ok"):
-        raise RuntimeError(f"Telegram API error: {payload}")
-    return payload
-
-
-def notify(token, chat_id, message):
-    telegram_call(token, "sendMessage", {
-        "chat_id": chat_id,
-        "text": message[:3400] + "\n\n" + storage_usage_footer(),
-    })
 
 
 def probe_media(media_path):
@@ -287,172 +247,26 @@ def prepare_delivery_media(media_path, source_duration):
     return prepared
 
 
-def file_sha256(media_path):
-    with media_path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
-
-
-def verify_download_link(link, expected_size, expected_hash):
-    digest = hashlib.sha256()
-    size = 0
-    # Read the exact URL the recipient receives, without storing another copy or logging the URL.
-    try:
-        with requests.get(link, stream=True, timeout=(30, 900)) as response:
-            response.raise_for_status()
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                size += len(chunk)
-                if size > expected_size:
-                    raise RuntimeError("R2 download size differs from the original file.")
-                digest.update(chunk)
-    except requests.RequestException:
-        raise RuntimeError("Could not verify the private R2 download link.") from None
-    if size != expected_size or digest.hexdigest() != expected_hash:
-        raise RuntimeError("R2 download does not match the original file; no link was sent.")
-    print(f"R2 round-trip verified: {size} bytes; SHA-256 matches the original file.")
-
-
-def r2_client_and_bucket(*, read_timeout=900, retries=5):
-    account_id = os.environ.get("R2_ACCOUNT_ID", "").strip()
-    bucket = os.environ.get("R2_BUCKET_NAME", "").strip()
-    access_key = os.environ.get("R2_ACCESS_KEY_ID", "").strip()
-    secret_key = os.environ.get("R2_SECRET_ACCESS_KEY", "").strip()
-    missing = [
-        name for name, value in {
-            "R2_ACCOUNT_ID": account_id,
-            "R2_BUCKET_NAME": bucket,
-            "R2_ACCESS_KEY_ID": access_key,
-            "R2_SECRET_ACCESS_KEY": secret_key,
-        }.items() if not value
-    ]
-    if missing:
-        raise RuntimeError("Cloudflare R2 settings are missing: " + ", ".join(missing))
-
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
-        region_name="auto",
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-        config=Config(
-            signature_version="s3v4", connect_timeout=15, read_timeout=read_timeout,
-            retries={"max_attempts": retries},
-            # Avoid SDK optional aws-chunked checksum trailers on S3-compatible storage.
-            # Integrity is independently checked against the exact signed GET below.
-            request_checksum_calculation="when_required",
-            response_checksum_validation="when_required",
-        ),
-    )
-    return s3, bucket
-
-
-def format_size(size):
-    value = float(size)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if value < 1000 or unit == "TB":
-            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.2f} {unit}"
-        value /= 1000
-
-
-def storage_usage_footer():
-    try:
-        s3, bucket = r2_client_and_bucket(read_timeout=20, retries=2)
-        total_bytes = 0
-        for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket):
-            total_bytes += sum(item["Size"] for item in page.get("Contents", []))
-        value = format_size(total_bytes)
-    except Exception:
-        # An unavailable usage counter must not prevent delivery or pretend the bucket is empty.
-        value = "تعذرت قراءتها الآن"
-        print("R2 storage usage unavailable; delivering without a numeric total.")
-    return "🗄 مساحة السيرفر (R2): " + value
-
-
-DOWNLOAD_OPENERS = (
-    "جاهز لك، استمتع بالمشاهدة 🎬",
-    "تم التحميل، مقطعك صار جاهز ✨",
-    "مقطعك وصل، مشاهدة ممتعة 🍿",
-    "خلصنا التحميل، هذا مقطعك 🎞",
-)
-
-
-def download_message(title, media_size, footer, *, link=None, source=None):
-    clean_title = re.sub(r"\s+", " ", str(title or "مقطع فيديو")).strip()[:150]
-    lines = [
-        secrets.choice(DOWNLOAD_OPENERS),
-        "", clean_title,
-        "🔊 الصورة والصوت بجودة المصدر، بدون إعادة ضغط.",
-        "📦 حجم الملف: " + format_size(media_size),
-    ]
-    if link:
-        lines.extend(["", "🔗 رابط التنزيل الخاص:", link, "", "⏳ الرابط صالح لمدة ساعة. احفظ المقطع قبل انتهاء الوقت."])
-    elif source:
-        lines.extend(["", "🔗 المصدر: " + source[:200]])
-    lines.extend(["", "──────────────", footer])
-    return "\n".join(lines)
-
-
-def r2_download_link(media_path):
-    s3, bucket = r2_client_and_bucket()
-    safe_name = re.sub(r'[^A-Za-z0-9._-]', "_", media_path.name)[:180] or "video"
-    key = f"{R2_KEY_PREFIX}/{secrets.token_hex(16)}/{safe_name}"
-    content_type = mimetypes.guess_type(media_path.name)[0] or "application/octet-stream"
-    ascii_name = re.sub(r'[^A-Za-z0-9._-]', "_", media_path.name)[:180] or "video"
-    encoded_name = quote(media_path.name, safe="")
-    expected_size = media_path.stat().st_size
-    expected_hash = file_sha256(media_path)
-    for attempt in range(2):
-        try:
-            s3.upload_file(
-                str(media_path), bucket, key,
-                ExtraArgs={
-                    "ContentType": content_type,
-                    "ContentDisposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{encoded_name}",
-                },
-                Config=TransferConfig(
-                    multipart_threshold=64 * 1024 * 1024,
-                    multipart_chunksize=64 * 1024 * 1024,
-                    max_concurrency=4, use_threads=True,
-                ),
-            )
-            link = s3.generate_presigned_url(
-                "get_object", Params={"Bucket": bucket, "Key": key},
-                ExpiresIn=PRESIGNED_URL_EXPIRES_SECONDS,
-            )
-            verify_download_link(link, expected_size, expected_hash)
-            # Start the full one-hour validity after verification completes.
-            return s3.generate_presigned_url(
-                "get_object", Params={"Bucket": bucket, "Key": key},
-                ExpiresIn=PRESIGNED_URL_EXPIRES_SECONDS,
-            )
-        except Exception:
-            try:
-                s3.delete_object(Bucket=bucket, Key=key)
-            except Exception:
-                pass
-            if attempt:
-                raise RuntimeError("R2 upload verification failed twice; no download link was sent.") from None
-            print("R2 verification failed; retrying upload once.")
-
-
-def deliver(token, chat_id, media_path, source, title):
-    media_size = media_path.stat().st_size
-    if media_size <= TELEGRAM_DIRECT_UPLOAD_LIMIT:
-        method = "sendVideo" if media_path.suffix.lower() in {".mp4", ".mov"} else "sendDocument"
-        field = "video" if method == "sendVideo" else "document"
-        caption = download_message(title, media_size, storage_usage_footer(), source=source)
-        with media_path.open("rb") as stream:
-            telegram_call(
-                token,
-                method,
-                {"chat_id": chat_id, "caption": caption},
-                {field: (media_path.name, stream)},
-            )
-        return
-
-    link = r2_download_link(media_path)
-    # Measure after upload, so this clip is included in the reported bucket total.
-    message = download_message(title, media_size, storage_usage_footer(), link=link)
-    telegram_call(token, "sendMessage", {"chat_id": chat_id, "text": message})
+def error_notice(error, has_youtube_session):
+    if isinstance(error, DeliveryError):
+        return str(error)
+    detail = str(error)
+    if isinstance(error, yt_dlp.utils.DownloadError):
+        normalized = detail.casefold().replace("’", "'")
+        if "[youtube]" in normalized and "sign in to confirm" in normalized:
+            session = ("جلسة الحساب لم تُقبل من السيرفر." if has_youtube_session
+                       else "جلسة يوتيوب غير مضافة للسيرفر.")
+            return "يوتيوب طلب تسجيل الدخول للتحقق قبل تنزيل هذا المقطع. " + session
+        return "تعذر تنزيل المقطع من المصدر. تأكد إن الرابط متاح وجرّب مرة ثانية."
+    if isinstance(error, ValueError):
+        if detail.startswith(("ملف جلسة يوتيوب", "ملف الجلسة")):
+            return detail
+        return "رابط المقطع غير صالح أو غير مدعوم. تأكد من الرابط وحاول مرة ثانية."
+    if detail.startswith(("Incomplete download", "The completed video contains unreadable", "The completed video has")):
+        return "المقطع اللي وصل من المصدر ناقص أو فيه أجزاء ما تشتغل. ما أرسلناه حتى يصلك كامل."
+    if detail.startswith(("The source audio", "The prepared audio", "Could not verify the original audio")):
+        return "تعذر التحقق من سلامة الصوت الأصلي، فتوقف الإرسال."
+    return "تعذر تجهيز المقطع أو إرساله. جرّب مرة ثانية بعد قليل."
 
 
 def main():
@@ -464,6 +278,8 @@ def main():
     if not token or not chat_id:
         print("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID secrets.", file=sys.stderr)
         return 2
+    resources = ResourceClient()
+    started = time.monotonic()
     try:
         url = validate_url(raw_url)
         download_url = url
@@ -474,9 +290,12 @@ def main():
         is_youtube = urlparse(download_url).hostname in YOUTUBE_SESSION_HOSTS
         with tempfile.TemporaryDirectory(prefix="khalid-downloader-") as temp:
             template = str(Path(temp) / "%(title).100B-%(id)s.%(ext)s")
+            guard = DownloadGuard(resources, temp)
             options = {
                 "format": YOUTUBE_FORMAT if is_youtube else ORIGINAL_FORMAT,
                 "outtmpl": template,
+                "match_filter": guard.match,
+                "progress_hooks": [guard.progress],
                 "noplaylist": True,
                 "restrictfilenames": True,
                 "retries": 2,
@@ -503,28 +322,25 @@ def main():
             media = Path(final_path)
             if not media.is_file():
                 raise RuntimeError("yt-dlp finished without its final merged video file.")
+            print(f"Source download ready after {time.monotonic() - started:.2f}s.")
+            guard.check(media.stat().st_size)
             media = prepare_delivery_media(media, info.get("duration"))
             print(f"Validated final file: {media.stat().st_size} bytes.")
-            deliver(token, chat_id, media, url, title)
+            sending = time.monotonic()
+            deliver(token, chat_id, media, title, resources)
+            print(f"Delivery took {time.monotonic() - sending:.2f}s after media validation.")
             print("SUCCESS: original media delivered without transcoding.")
         return 0
-    except Exception as exc:
-        message = "KHALID DOWNLOADER failed: " + type(exc).__name__ + ": " + str(exc)[:800]
-        print(message, file=sys.stderr)
-        notice = message
-        if isinstance(exc, yt_dlp.utils.DownloadError):
-            detail = str(exc).casefold().replace("’", "'")
-            if "[youtube]" in detail and "sign in to confirm" in detail:
-                notice = (
-                    "يوتيوب طلب تسجيل الدخول للتحقق قبل تنزيل هذا المقطع. "
-                    + ("جلسة الحساب لم تُقبل من السيرفر." if cookies is not None
-                       else "لم تُضف جلسة يوتيوب إلى السيرفر بعد.")
-                )
+    except Exception as error:
+        # Upstream request exceptions can contain credentials. Only emit a safe error type.
+        print(f"KHALID DOWNLOADER failed ({type(error).__name__}).", file=sys.stderr)
         try:
-            notify(token, chat_id, notice)
-        except Exception as notify_error:
-            print("Telegram error notification failed: " + str(notify_error), file=sys.stderr)
+            telegram_call(token, "sendMessage", {"chat_id": chat_id, "text": error_notice(error, cookies is not None)})
+        except DeliveryError:
+            print("Telegram error notification was not confirmed.", file=sys.stderr)
         return 1
+    finally:
+        resources.notify(token, chat_id)
 
 
 if __name__ == "__main__":

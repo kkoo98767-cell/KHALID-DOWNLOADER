@@ -7,13 +7,14 @@ GITHUB_OWNER = "kkoo98767-cell"
 GITHUB_REPO = "KHALID-DOWNLOADER"
 GITHUB_REPO_ID = "1458359947"
 GITHUB_WORKFLOW = "downloader.yml"
+RESOURCE_NOTICE_WORKFLOW = "resource-notice.yml"
 ALLOWED_ORIGIN = "https://kkoo98767-cell.github.io"
 R2_STORAGE_LIMIT = "9900000000"
 R2_CLASS_A_LIMIT = "990000"
 R2_CLASS_B_LIMIT = "9900000"
 
 [triggers]
-crons = ["*/5 * * * *"]
+crons = []
 
 [[r2_buckets]]
 binding = "DOWNLOADS"

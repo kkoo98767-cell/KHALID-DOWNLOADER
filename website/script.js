@@ -82,7 +82,9 @@ $("submit").addEventListener("click", async () => {
     setProgress(100, "Request accepted by the service");
     button.querySelector(".button-icon").textContent = "✓";
     button.querySelector(".button-label").textContent = "REQUEST SENT";
-    show("Request queued. Telegram will receive the result when processing finishes.", "success");
+    show(data.duplicate
+      ? "This video was requested recently. Check Telegram for the result."
+      : "Request queued. Telegram will receive the result when processing finishes.", "success");
   } catch (e) {
     window.clearInterval(ticker);
     setProgress(0, "Request could not be sent");
@@ -110,10 +112,10 @@ else show("Ready. Paste a video link to begin.");
   const video = $("knight-video");
   const scene = video?.closest(".scene-art");
   if (!video || !scene) return;
-  const clips = Array.from({ length: 5 }, (_, i) => "media/clip-" + String(i + 1).padStart(2, "0") + ".mp4.b64");
+  const clips = Array.from({ length: 5 }, (_, i) => "media/clip-" + String(i + 1).padStart(2, "0") + ".mp4");
   const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
-  let lastClip = -1, activeUrl = "", timer = 0, loading = false;
-  let userPaused = motion.matches;
+  let lastClip = -1, timer = 0, loading = false;
+  let userPaused = motion.matches || navigator.connection?.saveData === true;
   video.muted = true;
 
   function updatePause() {
@@ -144,17 +146,6 @@ else show("Ready. Paste a video link to begin.");
     video.style.objectPosition = index === 4 ? "50% 42%" : portraitViewport() ? "57% center" : "50% 48%";
   }
   window.addEventListener("resize", () => positionClip(lastClip), { passive: true });
-  function decodeVideo(encoded) {
-    const binary = atob(encoded.trim());
-    const chunks = [];
-    for (let offset = 0; offset < binary.length; offset += 32768) {
-      const end = Math.min(offset + 32768, binary.length);
-      const bytes = new Uint8Array(end - offset);
-      for (let i = offset; i < end; i++) bytes[i - offset] = binary.charCodeAt(i);
-      chunks.push(bytes);
-    }
-    return new Blob(chunks, { type: "video/mp4" });
-  }
   async function changeClip() {
     if (loading) return;
     loading = true;
@@ -162,40 +153,35 @@ else show("Ready. Paste a video link to begin.");
     $("scene-next").disabled = true;
     const next = chooseClip();
     positionClip(next);
-    let nextUrl = "";
     try {
-      const response = await fetch(clips[next], { cache: "force-cache" });
-      if (!response.ok) throw Error("Clip unavailable");
-      nextUrl = URL.createObjectURL(decodeVideo(await response.text()));
       const ready = new Promise((resolve, reject) => {
         let timeout;
-        const cleanup = () => { window.clearTimeout(timeout); video.removeEventListener("loadeddata", loaded); video.removeEventListener("error", failed); };
+        const cleanup = () => { window.clearTimeout(timeout); video.removeEventListener("loadedmetadata", loaded); video.removeEventListener("error", failed); };
         const loaded = () => { cleanup(); resolve(); };
         const failed = () => { cleanup(); reject(Error("Clip unavailable")); };
-        video.addEventListener("loadeddata", loaded);
+        video.addEventListener("loadedmetadata", loaded);
         video.addEventListener("error", failed);
         timeout = window.setTimeout(failed, 20000);
       });
-      video.src = nextUrl;
+      video.src = clips[next];
       video.load();
       await ready;
       if (!userPaused && !document.hidden) {
         try { await video.play(); }
         catch { userPaused = true; updatePause(); }
       }
-      const previousUrl = activeUrl;
-      activeUrl = nextUrl;
-      nextUrl = "";
       lastClip = next;
       video.classList.add("is-visible");
       scene.classList.add("has-video");
       $("scene-number").textContent = "SCENE " + String(next + 1).padStart(2, "0") + " / 05";
-      if (previousUrl) URL.revokeObjectURL(previousUrl);
     } catch {
-      if (nextUrl) URL.revokeObjectURL(nextUrl);
-      if (!activeUrl) {
+      if (lastClip < 0) {
         video.classList.remove("is-visible");
         scene.classList.remove("has-video");
+      } else {
+        positionClip(lastClip);
+        video.src = clips[lastClip];
+        if (!userPaused && !document.hidden) video.play().catch(() => {});
       }
     } finally {
       loading = false;
@@ -208,7 +194,7 @@ else show("Ready. Paste a video link to begin.");
     updatePause();
     if (userPaused) { video.pause(); window.clearTimeout(timer); }
     else {
-      if (activeUrl) {
+      if (lastClip >= 0) {
         try { await video.play(); }
         catch { userPaused = true; updatePause(); }
         schedule();
@@ -219,7 +205,7 @@ else show("Ready. Paste a video link to begin.");
   document.addEventListener("visibilitychange", async () => {
     if (document.hidden) { video.pause(); window.clearTimeout(timer); }
     else if (!userPaused) {
-      if (activeUrl) {
+      if (lastClip >= 0) {
         try { await video.play(); }
         catch { userPaused = true; updatePause(); }
         schedule();
@@ -228,5 +214,5 @@ else show("Ready. Paste a video link to begin.");
   });
   window.addEventListener("pagehide", () => { window.clearTimeout(timer); video.pause(); });
   updatePause();
-  changeClip();
+  if (!userPaused && !document.hidden) changeClip();
 })();
