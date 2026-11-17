@@ -42,13 +42,12 @@ async function signingKeys() {
   return keyCache.keys;
 }
 
-export async function authorizedResourceRequest(request, env) {
+export async function authorizedResourceRequest(request, env, onReject = () => {}) {
+  const reject = reason => { onReject(reason); return false; };
   const authorization = request.headers.get("Authorization") || "";
-  if (authorization.length > 8192 || !env.GITHUB_REPO_ID || !env.GITHUB_OWNER || !env.GITHUB_REPO) {
-    return false;
-  }
+  if (!env.GITHUB_REPO_ID || !env.GITHUB_OWNER || !env.GITHUB_REPO) return reject("configuration");
   const match = /^Bearer ([\w-]+)\.([\w-]+)\.([\w-]+)$/.exec(authorization);
-  if (!match) return false;
+  if (!match || authorization.length > 8192) return reject("token-format");
   const [, headerSegment, claimsSegment, signatureSegment] = match;
   try {
     const header = readJson(headerSegment);
@@ -56,21 +55,20 @@ export async function authorizedResourceRequest(request, env) {
     const repository = env.GITHUB_OWNER + "/" + env.GITHUB_REPO;
     const workflow = env.GITHUB_WORKFLOW || "downloader.yml";
     const now = Math.floor(Date.now() / 1000);
-    if (header.alg !== "RS256" || typeof header.kid !== "string" || header.crit ||
-        claims.iss !== ISSUER || claims.aud !== AUDIENCE ||
-        claims.repository !== repository || claims.repository_id !== String(env.GITHUB_REPO_ID) ||
+    if (header.alg !== "RS256" || typeof header.kid !== "string" || header.crit) return reject("token-format");
+    if (claims.iss !== ISSUER || claims.aud !== AUDIENCE) return reject("issuer");
+    if (claims.repository !== repository || String(claims.repository_id) !== String(env.GITHUB_REPO_ID) ||
         claims.workflow_ref !== repository + "/.github/workflows/" + workflow + "@refs/heads/main" ||
-        claims.ref !== "refs/heads/main" || claims.event_name !== "workflow_dispatch" ||
-        !Number.isSafeInteger(claims.exp) || claims.exp <= now ||
-        !Number.isSafeInteger(claims.nbf) || claims.nbf > now + 15) {
-      return false;
-    }
+        claims.ref !== "refs/heads/main" || claims.event_name !== "workflow_dispatch") return reject("workflow");
+    if (!Number.isSafeInteger(claims.exp) || claims.exp <= now ||
+        !Number.isSafeInteger(claims.nbf) || claims.nbf > now + 15) return reject("time");
     const key = (await signingKeys()).get(header.kid);
-    return Boolean(key && await crypto.subtle.verify(
+    if (!key) return reject("signing-key");
+    return await crypto.subtle.verify(
       SIGNATURE, key, decodeBase64Url(signatureSegment),
       new TextEncoder().encode(headerSegment + "." + claimsSegment)
-    ));
+    ) || reject("signature");
   } catch {
-    return false;
+    return reject("verify");
   }
 }

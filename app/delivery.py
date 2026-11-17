@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import shutil
+import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -43,8 +44,8 @@ class DeliveryError(RuntimeError):
 
 class ResourceBlocked(DeliveryError):
     def __init__(self, reason):
-        self.reason = reason
-        super().__init__(RESOURCE_ERRORS.get(reason, RESOURCE_ERRORS["unavailable"]))
+        self.reason = reason if isinstance(reason, str) and reason in RESOURCE_ERRORS else "unavailable"
+        super().__init__(RESOURCE_ERRORS[self.reason])
 
 
 class TelegramRejected(DeliveryError):
@@ -116,6 +117,7 @@ class ResourceClient:
         try:
             token = resource_bearer_token()
         except Exception:
+            print("Resource ledger authentication could not obtain a runner identity.", file=sys.stderr)
             raise ResourceBlocked("unavailable") from None
         if not token:
             raise ResourceBlocked("unavailable")
@@ -141,8 +143,15 @@ class ResourceClient:
                         self.notices.extend(notice for notice in notices if isinstance(notice, str))
                     if response.ok and payload.get("ok") is True:
                         return payload
+                    reason = payload.get("reason")
+                    safe_reason = reason if isinstance(reason, str) and (
+                        reason in RESOURCE_ERRORS or reason in ("unauthorized", "invalid", "expired", "conflict")
+                    ) else "unknown"
+                    detail = response.headers.get("X-Resource-Identity", "")
+                    safe_detail = detail if detail in ("configuration", "token-format", "issuer", "workflow", "time", "signing-key", "signature", "verify") else ""
+                    print(f"Resource ledger {operation or 'status'} returned HTTP {response.status_code} ({safe_reason} {safe_detail}).", file=sys.stderr)
                     if response.status_code < 500:
-                        raise ResourceBlocked(payload.get("reason", "unavailable"))
+                        raise ResourceBlocked(reason or "unavailable")
             except requests.RequestException:
                 pass
         raise ResourceBlocked("unavailable")

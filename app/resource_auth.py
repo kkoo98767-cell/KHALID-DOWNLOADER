@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import sys
 import time
 from urllib.parse import urlparse
 
@@ -22,6 +23,7 @@ def resource_bearer_token():
     host = url.hostname or ""
     if (not credential or url.scheme != "https" or url.username or url.password
             or not host.endswith(".actions.githubusercontent.com")):
+        print("Resource identity unavailable: Actions OIDC environment missing or invalid.", file=sys.stderr)
         raise RuntimeError("GitHub Actions resource identity is unavailable.")
     try:
         response = requests.get(
@@ -32,6 +34,7 @@ def resource_bearer_token():
             allow_redirects=False,
         )
         if response.status_code != 200:
+            print(f"Resource identity endpoint rejected the request (HTTP {response.status_code}).", file=sys.stderr)
             raise ValueError("Token request failed.")
         token = response.json()["value"]
         _, payload, _ = token.split(".")

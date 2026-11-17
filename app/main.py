@@ -281,6 +281,9 @@ def main():
     resources = ResourceClient()
     started = time.monotonic()
     try:
+        if os.environ.get("VERIFY_R2_LINK") == "true":
+            smoke_usage = resources.status()
+            print(f"Resource ledger smoke status reliable: {smoke_usage.get('usage', {}).get('reliable') is True}.")
         url = validate_url(raw_url)
         download_url = url
         authentication = youtube_authentication(url, youtube_session)
@@ -334,6 +337,8 @@ def main():
     except Exception as error:
         # Upstream request exceptions can contain credentials. Only emit a safe error type.
         print(f"KHALID DOWNLOADER failed ({type(error).__name__}).", file=sys.stderr)
+        if isinstance(error, ResourceBlocked):
+            print(f"Resource protection reason: {error.reason}.", file=sys.stderr)
         try:
             telegram_call(token, "sendMessage", {"chat_id": chat_id, "text": error_notice(error, cookies is not None)})
         except DeliveryError:

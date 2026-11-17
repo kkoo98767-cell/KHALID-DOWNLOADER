@@ -59,7 +59,10 @@ async function smallBody(request) {
 async function protectedResource(request, env, spec) {
   const [method, path] = spec;
   if (request.method !== method) return reply({ ok: false, reason: "method" }, 405);
-  if (!await authorizedResourceRequest(request, env)) return reply({ ok: false, reason: "unauthorized" }, 401);
+  let identityFailure;
+  if (!await authorizedResourceRequest(request, env, reason => { identityFailure = reason; })) {
+    return reply({ ok: false, reason: "unauthorized" }, 401, { "x-resource-identity": identityFailure });
+  }
   const stub = ledger(env);
   if (!stub || !env.DOWNLOADS) return reply({ ok: false, reason: "unavailable", usage: { reliable: false } }, 503);
   try {
