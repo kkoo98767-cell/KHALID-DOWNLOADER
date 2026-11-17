@@ -27,6 +27,12 @@ PRESIGNED_URL_EXPIRES_SECONDS = 60 * 60
 R2_KEY_PREFIX = "khalid-downloads"
 YOUTUBE_SESSION_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
 YOUTUBE_COOKIE_DOMAINS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"}
+ORIGINAL_FORMAT = "bestvideo*+bestaudio/best"
+YOUTUBE_FORMAT = (
+    "bestvideo*[ext=mp4][vcodec^=avc1][acodec~='^(none$|mp4a)']+bestaudio[ext=m4a][acodec^=mp4a]/"
+    "best[ext=mp4][vcodec^=avc1][acodec^=mp4a]/"
+    + ORIGINAL_FORMAT
+)
 
 
 def validate_url(raw):
@@ -274,7 +280,10 @@ def prepare_delivery_media(media_path, source_duration):
     )
     if result.returncode:
         raise RuntimeError("The completed video contains unreadable frames; no download link was sent.")
-    print(f"Playback validated: {duration:.1f}s; original encoded video preserved.")
+    audio_codec = selected_audio.get("codec_name", "unknown") if selected_audio else "none"
+    print(f"Playback validated: {duration:.1f}s; {prepared.suffix[1:]}, "
+          f"{video.get('width', '?')}x{video.get('height', '?')}, "
+          f"{video.get('codec_name', 'unknown')} video, {audio_codec} audio.")
     return prepared
 
 
@@ -462,10 +471,11 @@ def main():
         del youtube_session
         if authentication is not None:
             download_url, cookies = authentication
+        is_youtube = urlparse(download_url).hostname in YOUTUBE_SESSION_HOSTS
         with tempfile.TemporaryDirectory(prefix="khalid-downloader-") as temp:
             template = str(Path(temp) / "%(title).100B-%(id)s.%(ext)s")
             options = {
-                "format": "bestvideo*+bestaudio/best",
+                "format": YOUTUBE_FORMAT if is_youtube else ORIGINAL_FORMAT,
                 "outtmpl": template,
                 "noplaylist": True,
                 "restrictfilenames": True,
