@@ -1,8 +1,12 @@
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import yt_dlp
 
-from app.main import youtube_authentication
+from app.delivery import DeliveryError
+from app.main import download_source, youtube_authentication
 
 
 COOKIE_FILE = (
@@ -43,6 +47,48 @@ class YouTubeSessionTests(unittest.TestCase):
             youtube_authentication("https://youtu.be/VFE3slVdK3g", invalid)
         self.assertNotIn("secret-expiry", str(caught.exception))
         self.assertNotIn("synthetic-youtube-value", str(caught.exception))
+
+    @patch("app.main.extract_media")
+    def test_working_public_download_does_not_open_a_stored_session(self, extract):
+        result = ({"id": "VFE3slVdK3g"}, Path("video.mp4"))
+        extract.return_value = result
+        url = "https://youtu.be/VFE3slVdK3g"
+        self.assertEqual(download_source(url, {}, SimpleNamespace(files={}), "invalid"), result)
+        extract.assert_called_once_with(url, {})
+
+    @patch("app.main.extract_media")
+    def test_sign_in_required_uses_one_scoped_session_and_closes_it(self, extract):
+        challenge = yt_dlp.utils.DownloadError("[youtube] Sign in to confirm you’re not a bot.")
+        result = ({"id": "VFE3slVdK3g"}, Path("video.mp4"))
+        extract.side_effect = [challenge, result]
+        self.assertEqual(download_source(
+            "https://youtu.be/VFE3slVdK3g", {}, SimpleNamespace(files={}), COOKIE_FILE
+        ), result)
+        url, options = extract.call_args_list[1].args
+        self.assertEqual(url, "https://www.youtube.com/watch?v=VFE3slVdK3g")
+        self.assertEqual(options["allowed_extractors"], ["youtube"])
+        self.assertTrue(options["cookiefile"].closed)
+
+    @patch("app.main.extract_media")
+    def test_other_errors_or_started_downloads_do_not_retry(self, extract):
+        for url, detail, files in (
+            ("https://youtube.com/watch?v=VFE3slVdK3g", "[youtube] HTTP Error 403", {}),
+            ("https://youtu.be/VFE3slVdK3g", "[youtube] Sign in to confirm", {"video": 120}),
+            ("https://other.example/video", "[youtube] Sign in to confirm", {}),
+        ):
+            with self.subTest(url=url, detail=detail):
+                extract.reset_mock()
+                extract.side_effect = yt_dlp.utils.DownloadError(detail)
+                with self.assertRaises(yt_dlp.utils.DownloadError):
+                    download_source(url, {}, SimpleNamespace(files=files), COOKIE_FILE)
+                extract.assert_called_once_with(url, {})
+
+    @patch("app.main.extract_media")
+    def test_rejected_session_stops_and_reports_original_file_option(self, extract):
+        extract.side_effect = yt_dlp.utils.DownloadError("[youtube] Sign in to confirm")
+        with self.assertRaisesRegex(DeliveryError, "رفض جلسة الدخول"):
+            download_source("https://youtu.be/VFE3slVdK3g", {}, SimpleNamespace(files={}), COOKIE_FILE)
+        self.assertEqual(extract.call_count, 2)
 
 
 if __name__ == "__main__":

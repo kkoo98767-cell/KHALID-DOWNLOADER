@@ -8,7 +8,7 @@ Only download content you own or have permission to save. This project does not 
 ## Current architecture
 1. Website / iPhone Shortcut submits a URL to a protected Cloudflare Worker.
 2. Worker authenticates the request and dispatches this repository's workflow.
-3. GitHub Actions runs yt-dlp for a single URL without playlists. An optional YouTube session is used only for HTTPS YouTube video links. The runner verifies the complete video and copies the selected encoded tracks without encoding again.
+3. GitHub Actions runs yt-dlp for a single URL without playlists. It first requests YouTube videos as a guest. An optional session is tried once on an HTTPS video link if YouTube requires sign-in before media data is downloaded. The runner verifies the complete video and copies the selected encoded tracks without encoding again.
 4. Files up to 50 MB go directly from the runner to the hosted Telegram Bot API when supported. The Worker does not transfer or decode their bytes.
 5. A SQLite Durable Object reserves R2 capacity for large files. The runner uploads directly to R2 with per-request checksums, then the Worker issues a one-hour capability URL. The Worker controls and counts each real R2 read and streams the requested bytes. A Durable Object alarm queues deletion at expiry.
 
@@ -24,6 +24,8 @@ In Settings > Secrets and variables > Actions, create:
 Use a private, dedicated R2 Standard bucket with credentials scoped to that bucket. Keep its public development and custom-domain access disabled so reads use the guarded URL. Add R2 lifecycle rules for the `khalid-downloads/` prefix to expire completed objects after one day and abort incomplete multipart uploads after one day as a provider-side backstop. The one-hour expiry is enforced immediately by the Worker on new download requests; physical deletion is retried after a temporary storage error.
 
 An owner who chooses to enable YouTube authentication can add the Netscape-formatted session for their YouTube-only account as the Actions secret `YOUTUBE_COOKIES`. Paste it directly into GitHub Secrets. Keep it out of the repository, logs, and messages. This is an account credential and may expire or be rejected by YouTube. Delete the secret to turn off authenticated requests. See [yt-dlp session guidance](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies).
+
+If YouTube does not make a media URL available to the runner, a direct HTTPS link to an original file you own or have permission to save follows the same delivery pipeline. For your own uploads, [YouTube Studio or Google Takeout](https://support.google.com/youtube/answer/56100) can export a copy. Studio exports may be lower resolution. Use your original file when exact source quality is required.
 
 ## Cloudflare Worker
 Deploy api/cloudflare-worker using Wrangler. Configure Worker secrets API_SECRET and GITHUB_TOKEN. Use a fine-grained GitHub token restricted to this repository with Actions read/write and metadata read-only. Set ALLOWED_ORIGIN to the exact HTTPS website origin. Never put the GitHub token or R2 credentials in frontend code or an iPhone Shortcut.

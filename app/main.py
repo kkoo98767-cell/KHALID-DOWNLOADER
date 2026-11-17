@@ -84,6 +84,59 @@ def youtube_authentication(url, session):
     )
 
 
+def youtube_login_required(error):
+    detail = str(error).casefold().replace("’", "'")
+    return "[youtube]" in detail and any(phrase in detail for phrase in (
+        "sign in to confirm", "sign in to verify", "login required", "this video is private",
+    ))
+
+
+def extract_media(url, options):
+    completed_paths = []
+    with yt_dlp.YoutubeDL({**options, "post_hooks": [completed_paths.append]}) as downloader:
+        info = downloader.extract_info(url, download=True)
+        final_path = completed_paths[-1] if completed_paths else info.get("filepath")
+        if not final_path:
+            final_path = downloader.prepare_filename(info)
+    return info, Path(final_path)
+
+
+def download_source(url, options, guard, youtube_session):
+    try:
+        return extract_media(url, options)
+    except yt_dlp.utils.DownloadError as guest_error:
+        if not (
+            urlparse(url).hostname in YOUTUBE_SESSION_HOSTS
+            and youtube_login_required(guest_error)
+            and not guard.files
+        ):
+            raise
+        try:
+            authentication = youtube_authentication(url, youtube_session)
+        except ValueError:
+            print("YouTube session skipped because its configuration is invalid.", file=sys.stderr)
+            authentication = None
+        if authentication is None:
+            raise DeliveryError(
+                "يوتيوب طلب تسجيل الدخول قبل إتاحة التنزيل. إذا عندك الملف الأصلي، أرسل رابطه المباشر. "
+                "إذا المقطع من قناتك، تقدر تصدّره من استوديو يوتيوب أو Google Takeout."
+            ) from None
+        authenticated_url, cookies = authentication
+        print("YouTube requested sign-in. Trying the configured YouTube session once.")
+        with cookies:
+            try:
+                return extract_media(authenticated_url, {
+                    **options, "cookiefile": cookies, "allowed_extractors": ["youtube"],
+                })
+            except yt_dlp.utils.DownloadError as session_error:
+                if not youtube_login_required(session_error):
+                    raise
+                raise DeliveryError(
+                    "يوتيوب رفض جلسة الدخول المحفوظة لهذا المقطع. إذا عندك الملف الأصلي، أرسل رابطه المباشر. "
+                    "إذا المقطع من قناتك، تقدر تصدّره من استوديو يوتيوب أو Google Takeout."
+                ) from None
+
+
 def probe_media(media_path):
     result = subprocess.run(
         [
@@ -247,16 +300,11 @@ def prepare_delivery_media(media_path, source_duration):
     return prepared
 
 
-def error_notice(error, has_youtube_session):
+def error_notice(error):
     if isinstance(error, DeliveryError):
         return str(error)
     detail = str(error)
     if isinstance(error, yt_dlp.utils.DownloadError):
-        normalized = detail.casefold().replace("’", "'")
-        if "[youtube]" in normalized and "sign in to confirm" in normalized:
-            session = ("جلسة الحساب لم تُقبل من السيرفر." if has_youtube_session
-                       else "جلسة يوتيوب غير مضافة للسيرفر.")
-            return "يوتيوب طلب تسجيل الدخول للتحقق قبل تنزيل هذا المقطع. " + session
         return "تعذر تنزيل المقطع من المصدر. تأكد إن الرابط متاح وجرّب مرة ثانية."
     if isinstance(error, ValueError):
         if detail.startswith(("ملف جلسة يوتيوب", "ملف الجلسة")):
@@ -274,7 +322,6 @@ def main():
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     raw_url = os.environ.get("VIDEO_URL", "").strip()
     youtube_session = os.environ.pop("YOUTUBE_COOKIES", "")
-    cookies = None
     if not token or not chat_id:
         print("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID secrets.", file=sys.stderr)
         return 2
@@ -285,12 +332,7 @@ def main():
             smoke_usage = resources.status()
             print(f"Resource ledger smoke status reliable: {smoke_usage.get('usage', {}).get('reliable') is True}.")
         url = validate_url(raw_url)
-        download_url = url
-        authentication = youtube_authentication(url, youtube_session)
-        del youtube_session
-        if authentication is not None:
-            download_url, cookies = authentication
-        is_youtube = urlparse(download_url).hostname in YOUTUBE_SESSION_HOSTS
+        is_youtube = urlparse(url).hostname in YOUTUBE_SESSION_HOSTS
         with tempfile.TemporaryDirectory(prefix="khalid-downloader-") as temp:
             template = str(Path(temp) / "%(title).100B-%(id)s.%(ext)s")
             guard = DownloadGuard(resources, temp)
@@ -307,22 +349,9 @@ def main():
                 "js_runtimes": {"node": {}},
                 "quiet": False,
             }
-            completed_paths = []
-            options["post_hooks"] = [completed_paths.append]
-            if cookies is not None:
-                options["cookiefile"] = cookies
-                options["allowed_extractors"] = ["youtube"]
-            try:
-                with yt_dlp.YoutubeDL(options) as ydl:
-                    info = ydl.extract_info(download_url, download=True)
-                    title = info.get("title", "video")
-                    final_path = completed_paths[-1] if completed_paths else info.get("filepath")
-                    if not final_path:
-                        final_path = ydl.prepare_filename(info)
-            finally:
-                if cookies is not None:
-                    cookies.close()
-            media = Path(final_path)
+            info, media = download_source(url, options, guard, youtube_session)
+            del youtube_session
+            title = info.get("title", "video")
             if not media.is_file():
                 raise RuntimeError("yt-dlp finished without its final merged video file.")
             print(f"Source download ready after {time.monotonic() - started:.2f}s.")
@@ -340,7 +369,7 @@ def main():
         if isinstance(error, ResourceBlocked):
             print(f"Resource protection reason: {error.reason}.", file=sys.stderr)
         try:
-            telegram_call(token, "sendMessage", {"chat_id": chat_id, "text": error_notice(error, cookies is not None)})
+            telegram_call(token, "sendMessage", {"chat_id": chat_id, "text": error_notice(error)})
         except DeliveryError:
             print("Telegram error notification was not confirmed.", file=sys.stderr)
         return 1

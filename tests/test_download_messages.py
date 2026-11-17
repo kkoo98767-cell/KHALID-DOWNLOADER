@@ -102,7 +102,7 @@ class DownloadMessagesTests(unittest.TestCase):
         self.assertEqual(telegram.call_args.args[1], "sendMessage")
 
     def test_unknown_failures_do_not_echo_secrets_or_english(self):
-        message = error_notice(RuntimeError("secret-key-with-english-message"), False)
+        message = error_notice(RuntimeError("secret-key-with-english-message"))
         self.assertRegex(message, r"[\u0600-\u06ff]")
         self.assertNotIn("secret-key", message)
 
