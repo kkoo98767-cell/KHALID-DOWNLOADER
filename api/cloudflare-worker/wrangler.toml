@@ -5,8 +5,12 @@ compatibility_date = "2026-11-15"
 [vars]
 GITHUB_OWNER = "kkoo98767-cell"
 GITHUB_REPO = "KHALID-DOWNLOADER"
+GITHUB_REPO_ID = "1458359947"
 GITHUB_WORKFLOW = "downloader.yml"
 ALLOWED_ORIGIN = "https://kkoo98767-cell.github.io"
+R2_STORAGE_LIMIT = "9900000000"
+R2_CLASS_A_LIMIT = "990000"
+R2_CLASS_B_LIMIT = "9900000"
 
 [triggers]
 crons = ["*/5 * * * *"]
@@ -14,3 +18,11 @@ crons = ["*/5 * * * *"]
 [[r2_buckets]]
 binding = "DOWNLOADS"
 bucket_name = "khalid-downloader-files"
+
+[[durable_objects.bindings]]
+name = "RESOURCE_LEDGER"
+class_name = "ResourceLedger"
+
+[[migrations]]
+tag = "resource-ledger-v1"
+new_sqlite_classes = ["ResourceLedger"]

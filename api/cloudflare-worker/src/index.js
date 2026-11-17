@@ -1,6 +1,10 @@
-const VERSION = "2026-11-15.4";
-const DOWNLOAD_PREFIX = "khalid-downloads/";
-const DOWNLOAD_RETENTION_MS = 60 * 60 * 1000;
+import { authorizedResourceRequest } from "./oidc.js";
+import { DOWNLOAD_TOKEN, publicDownloadOptions, streamDownload } from "./downloads.js";
+import { newDispatchLease } from "./dispatch.js";
+
+export { ResourceLedger } from "./resource-ledger.js";
+
+const VERSION = "2026-11-17.1";
 
 const reply = (body, status = 200, headers = {}) =>
   new Response(JSON.stringify(body), {
@@ -12,34 +16,98 @@ const reply = (body, status = 200, headers = {}) =>
     }
   });
 
-async function cleanExpiredDownloads(bucket) {
-  const cutoff = Date.now() - DOWNLOAD_RETENTION_MS;
-  let cursor;
-  let deleted = 0;
+const RESOURCE_PATHS = new Map([
+  ["/internal/resources", ["GET", "/status"]],
+  ["/internal/resources/reserve", ["POST", "/reserve"]],
+  ["/internal/resources/complete", ["POST", "/complete"]],
+  ["/internal/resources/cancel", ["POST", "/cancel"]],
+  ["/internal/resources/upload-id", ["POST", "/upload-id"]],
+]);
 
-  do {
-    const page = await bucket.list({
-      prefix: DOWNLOAD_PREFIX,
-      limit: 1000,
-      ...(cursor ? { cursor } : {})
-    });
-    const expired = page.objects.filter(object => object.uploaded.getTime() <= cutoff);
-    for (const object of expired) {
-      await bucket.delete(object.key);
-      deleted += 1;
+function ledger(env) {
+  return env.RESOURCE_LEDGER?.getByName("downloads");
+}
+
+async function ledgerDispatch(stub, path, lease) {
+  const response = await stub.fetch("https://ledger.internal/dispatch/" + path, {
+    method: "POST",
+    body: JSON.stringify(lease),
+  });
+  const result = await response.json();
+  if (!response.ok || !result.ok) throw new Error("Dispatch ledger unavailable");
+  return result;
+}
+
+async function smallBody(request) {
+  const reader = request.body?.getReader();
+  if (!reader) return "";
+  const decoder = new TextDecoder();
+  let size = 0;
+  let body = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) return body + decoder.decode();
+    size += value.byteLength;
+    if (size > 8192) {
+      await reader.cancel();
+      return null;
     }
-    cursor = page.truncated ? page.cursor : undefined;
-  } while (cursor);
+    body += decoder.decode(value, { stream: true });
+  }
+}
 
-  console.log("Expired R2 downloads removed", { deleted });
+async function protectedResource(request, env, spec) {
+  const [method, path] = spec;
+  if (request.method !== method) return reply({ ok: false, reason: "method" }, 405);
+  if (!await authorizedResourceRequest(request, env)) return reply({ ok: false, reason: "unauthorized" }, 401);
+  const stub = ledger(env);
+  if (!stub || !env.DOWNLOADS) return reply({ ok: false, reason: "unavailable", usage: { reliable: false } }, 503);
+  try {
+    const body = method === "POST" ? await smallBody(request) : undefined;
+    if (body === null) return reply({ ok: false, reason: "invalid" }, 413);
+    const result = await stub.fetch(`https://ledger.internal${path}`, { method, body });
+    const payload = await result.json();
+    if (payload.token) {
+      const { token, ...safe } = payload;
+      const link = new URL(`/download/${token}`, request.url);
+      link.protocol = "https:";
+      return reply({ ...safe, url: link.href }, result.status);
+    }
+    return reply(payload, result.status);
+  } catch {
+    console.warn("Resource ledger unavailable");
+    return reply({ ok: false, reason: "unavailable", usage: { reliable: false } }, 503);
+  }
+}
+
+async function protectedDownload(request, env, token) {
+  if (!DOWNLOAD_TOKEN.test(token)) return new Response(null, { status: 404 });
+  if (!["GET", "HEAD"].includes(request.method)) return new Response(null, { status: 405, headers: { allow: "GET, HEAD" } });
+  const stub = ledger(env);
+  if (!stub || !env.DOWNLOADS) return new Response(null, { status: 503 });
+  try {
+    const response = await stub.fetch("https://ledger.internal/read", {
+      method: "POST",
+      body: JSON.stringify(publicDownloadOptions(request, token)),
+    });
+    return streamDownload(await response.json(), env.DOWNLOADS);
+  } catch {
+    return new Response(null, { status: 503, headers: { "cache-control": "no-store" } });
+  }
 }
 
 export default {
-  async scheduled(controller, env, ctx) {
-    ctx.waitUntil(cleanExpiredDownloads(env.DOWNLOADS));
+  async scheduled(_event, env, ctx) {
+    const stub = ledger(env);
+    if (stub) ctx.waitUntil(stub.fetch("https://ledger.internal/legacy-clean", { method: "POST", body: "{}" }));
   },
 
   async fetch(request, env) {
+    const { pathname } = new URL(request.url);
+    if (pathname.startsWith("/download/")) return protectedDownload(request, env, pathname.slice("/download/".length));
+    if (RESOURCE_PATHS.has(pathname)) return protectedResource(request, env, RESOURCE_PATHS.get(pathname));
+    if (pathname !== "/" && pathname !== "/health") return reply({ ok: false, error: "Not found" }, 404);
+
     const origin = request.headers.get("Origin") || "";
     const allowedOrigin = env.ALLOWED_ORIGIN || "";
     const originAllowed = Boolean(origin && allowedOrigin && origin === allowedOrigin);
@@ -49,16 +117,6 @@ export default {
           "vary": "Origin"
         }
       : {};
-
-    // Log only diagnostic metadata; never log API secrets, GitHub tokens, or submitted URLs.
-    console.log("Request received", {
-      method: request.method,
-      origin: origin || "(none)",
-      allowedOriginConfigured: Boolean(allowedOrigin),
-      originAllowed,
-      requestedMethod: request.headers.get("Access-Control-Request-Method") || "",
-      requestedHeaders: request.headers.get("Access-Control-Request-Headers") || ""
-    });
 
     if (request.method === "OPTIONS") {
       if (!originAllowed) {
@@ -80,7 +138,9 @@ export default {
       const info = {
         ok: true,
         service: "khalid-downloader-api",
-        version: VERSION
+        version: VERSION,
+        resourceApi: 1,
+        resourceLedger: Boolean(env.RESOURCE_LEDGER && env.DOWNLOADS)
       };
       if (request.headers.get("Authorization") === `Bearer ${env.API_SECRET || ""}` && env.API_SECRET) {
         info.missing = ["API_SECRET", "GITHUB_TOKEN", "GITHUB_OWNER", "GITHUB_REPO", "ALLOWED_ORIGIN"]
@@ -89,7 +149,7 @@ export default {
       return reply(info, 200, cors);
     }
 
-    if (request.method !== "POST") {
+    if (request.method !== "POST" || pathname !== "/") {
       return reply({ ok: false, error: "Method not allowed" }, 405, cors);
     }
 
@@ -99,12 +159,14 @@ export default {
 
     let body;
     try {
-      body = await request.json();
+      const rawBody = await smallBody(request);
+      if (rawBody === null) return reply({ ok: false, error: "Request too large" }, 413, cors);
+      body = JSON.parse(rawBody);
     } catch {
       return reply({ ok: false, error: "Invalid JSON" }, 400, cors);
     }
 
-    const raw = typeof body.url === "string" ? body.url.trim() : "";
+    const raw = typeof body?.url === "string" ? body.url.trim() : "";
     let parsed;
     try {
       parsed = new URL(raw);
@@ -123,6 +185,18 @@ export default {
     const workflow = env.GITHUB_WORKFLOW || "downloader.yml";
     const endpoint = `https://api.github.com/repos/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`;
 
+    const stub = ledger(env);
+    let lease;
+    if (stub) {
+      try {
+        lease = await newDispatchLease(parsed);
+        if ((await ledgerDispatch(stub, "lease", lease)).duplicate) {
+          return reply({ ok: true, duplicate: true, message: "This video was requested recently." }, 202, cors);
+        }
+      } catch {
+        console.warn("Dispatch deduplication temporarily unavailable");
+      }
+    }
     let gh;
     try {
       gh = await fetch(endpoint, {
@@ -134,24 +208,23 @@ export default {
           "user-agent": "khalid-downloader-worker",
           "content-type": "application/json"
         },
-        body: JSON.stringify({ ref: "main", inputs: { url: raw } })
+        body: JSON.stringify({ ref: "main", inputs: { url: raw } }),
+        signal: AbortSignal.timeout(10000)
       });
-    } catch (error) {
-      console.error("GitHub request failed", String(error));
+    } catch {
+      console.error("GitHub dispatch response unavailable");
       return reply({ ok: false, error: "Worker could not reach GitHub" }, 502, cors);
     }
 
-    if (gh.status !== 204) {
-      const text = (await gh.text()).slice(0, 600);
-      let detail = text;
-      try {
-        detail = JSON.parse(text).message || text;
-      } catch {}
-      console.error("GitHub workflow dispatch rejected", { status: gh.status, detail: String(detail).slice(0, 300) });
+    if (![200, 204].includes(gh.status)) {
+      if (lease && gh.status >= 400 && gh.status < 500) {
+        try { await ledgerDispatch(stub, "release", lease); }
+        catch { console.warn("Dispatch lease will expire automatically"); }
+      }
+      console.error("GitHub workflow dispatch rejected", { status: gh.status });
       return reply({
         ok: false,
-        error: `GitHub could not queue the job (HTTP ${gh.status})`,
-        detail: String(detail).slice(0, 300)
+        error: `GitHub could not queue the job (HTTP ${gh.status})`
       }, 502, cors);
     }
 
