@@ -415,6 +415,7 @@ def main():
                 "retries": 2,
                 "fragment_retries": 2,
                 "socket_timeout": 25,
+                "js_runtimes": {"node": {}},
                 "quiet": False,
             }
             completed_paths = []
@@ -436,8 +437,16 @@ def main():
     except Exception as exc:
         message = "KHALID DOWNLOADER failed: " + type(exc).__name__ + ": " + str(exc)[:800]
         print(message, file=sys.stderr)
+        notice = message
+        if isinstance(exc, yt_dlp.utils.DownloadError):
+            detail = str(exc).casefold().replace("’", "'")
+            if "[youtube]" in detail and "sign in to confirm" in detail:
+                notice = (
+                    "يوتيوب طلب تسجيل الدخول للتحقق قبل تنزيل هذا المقطع. "
+                    "تعذّر تنزيله من السيرفر."
+                )
         try:
-            notify(token, chat_id, message)
+            notify(token, chat_id, notice)
         except Exception as notify_error:
             print("Telegram error notification failed: " + str(notify_error), file=sys.stderr)
         return 1
