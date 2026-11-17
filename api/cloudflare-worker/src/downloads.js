@@ -56,6 +56,7 @@ export async function streamDownload(instruction, bucket) {
   headers.set("content-type", extensions[file.split(".").pop().toLowerCase()] || "application/octet-stream");
   const asciiFile = file.replace(/[^A-Za-z0-9_.-]/g, "_");
   headers.set("content-disposition", `attachment; filename="${asciiFile}"; filename*=UTF-8''${encodeURIComponent(file).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16)}`)}`);
+  headers.set("x-object-size", `${size}`);
   headers.set("content-length", `${range?.length ?? size}`);
   if (range) headers.set("content-range", `bytes ${range.offset}-${range.offset + range.length - 1}/${size}`);
   if (head) return new Response(null, { status, headers });

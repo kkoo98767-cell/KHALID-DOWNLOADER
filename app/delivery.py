@@ -454,7 +454,8 @@ class R2Upload:
 def verify_guarded_link(link, media_path, size):
     try:
         headers = requests.head(link, timeout=(3, 8), allow_redirects=False)
-        if headers.status_code != 200 or headers.headers.get("Content-Length") != str(size):
+        reported_size = headers.headers.get("X-Object-Size", headers.headers.get("Content-Length"))
+        if headers.status_code != 200 or reported_size != str(size):
             raise ValueError("Unexpected HEAD response.")
         with requests.get(link, headers={"Range": "bytes=0-0"}, stream=True,
                           timeout=(3, 8), allow_redirects=False) as response:
