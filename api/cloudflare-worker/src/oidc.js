@@ -15,7 +15,7 @@ function readJson(segment) {
 
 async function loadKeys() {
   const response = await fetch(ISSUER + "/.well-known/jwks", {
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(5000),
     cf: { cacheEverything: true, cacheTtlByStatus: { "200": 300, "400-599": 0 } }
   });
@@ -29,17 +29,10 @@ async function loadKeys() {
 }
 
 async function signingKeys() {
-  if (!keyCache || keyCache.until <= Date.now()) {
-    const pending = { until: Date.now() + KEY_TTL_MS, keys: loadKeys() };
-    keyCache = pending;
-    try {
-      return await pending.keys;
-    } catch (error) {
-      if (keyCache === pending) keyCache = undefined;
-      throw error;
-    }
-  }
-  return keyCache.keys;
+  if (keyCache?.until > Date.now()) return keyCache.keys;
+  const keys = await loadKeys();
+  keyCache = { until: Date.now() + KEY_TTL_MS, keys };
+  return keys;
 }
 
 export async function authorizedResourceRequest(request, env, onReject = () => {}) {

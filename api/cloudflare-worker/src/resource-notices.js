@@ -26,7 +26,7 @@ export async function sendBackgroundNotices(env, storage) {
         "x-github-api-version": "2022-11-28",
       },
       body: JSON.stringify({ ref: "main", inputs: { notice: batch.join("\n\n").slice(0, 3000) } }),
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.timeout(5000),
     });
     if (response.status === 204 || response.status === 200) {

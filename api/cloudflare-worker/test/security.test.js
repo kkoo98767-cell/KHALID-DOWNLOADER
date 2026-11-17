@@ -21,8 +21,9 @@ test("OIDC accepts a signed main runner identity and rejects wrong scope or tamp
   }, true, ["sign", "verify"]);
   const jwk = await crypto.subtle.exportKey("jwk", keys.publicKey);
   jwk.kid = "trusted";
-  const remote = t.mock.method(globalThis, "fetch", async address => {
+  const remote = t.mock.method(globalThis, "fetch", async (address, options) => {
     assert.equal(address, issuer + "/.well-known/jwks");
+    assert.equal(options.redirect, "manual");
     return Response.json({ keys: [jwk] });
   });
   const encode = input => Buffer.from(JSON.stringify(input)).toString("base64url");
@@ -87,6 +88,7 @@ test("background alerts retain a rejected batch and clear it once GitHub accepts
   let status = 503;
   const request = t.mock.method(globalThis, "fetch", async (url, options) => {
     assert.equal(new URL(url).pathname, "/repos/example/downloader/actions/workflows/resource-notice.yml/dispatches");
+    assert.equal(options.redirect, "manual");
     assert.deepEqual(JSON.parse(options.body), { ref: "main", inputs: { notice: "رجعت عمليات التحميل." } });
     return new Response(null, { status });
   });

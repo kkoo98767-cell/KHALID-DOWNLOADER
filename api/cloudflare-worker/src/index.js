@@ -4,7 +4,7 @@ import { newDispatchLease } from "./dispatch.js";
 
 export { ResourceLedger } from "./resource-ledger.js";
 
-const VERSION = "2026-11-17.1";
+const VERSION = "2026-11-17.2";
 
 const reply = (body, status = 200, headers = {}) =>
   new Response(JSON.stringify(body), {
@@ -212,6 +212,7 @@ export default {
           "content-type": "application/json"
         },
         body: JSON.stringify({ ref: "main", inputs: { url: raw } }),
+        redirect: "manual",
         signal: AbortSignal.timeout(10000)
       });
     } catch {
