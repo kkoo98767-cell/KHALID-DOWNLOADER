@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 import yt_dlp
 
-from .delivery import DeliveryError, DownloadGuard, ResourceClient, deliver, telegram_call
+from .delivery import DeliveryError, DownloadGuard, ResourceBlocked, ResourceClient, deliver, telegram_call
 
 YOUTUBE_SESSION_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
 YOUTUBE_COOKIE_DOMAINS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"}
@@ -84,10 +84,12 @@ def youtube_authentication(url, session):
     )
 
 
-def youtube_login_required(error):
+def youtube_session_retryable(error):
     detail = str(error).casefold().replace("’", "'")
     return "[youtube]" in detail and any(phrase in detail for phrase in (
         "sign in to confirm", "sign in to verify", "login required", "this video is private",
+        "video unavailable. this content isn't available",
+        "this content isn't available, try again later",
     ))
 
 
@@ -107,7 +109,7 @@ def download_source(url, options, guard, youtube_session):
     except yt_dlp.utils.DownloadError as guest_error:
         if not (
             urlparse(url).hostname in YOUTUBE_SESSION_HOSTS
-            and youtube_login_required(guest_error)
+            and youtube_session_retryable(guest_error)
             and not guard.files
         ):
             raise
@@ -122,17 +124,17 @@ def download_source(url, options, guard, youtube_session):
                 "إذا المقطع من قناتك، تقدر تصدّره من استوديو يوتيوب أو Google Takeout."
             ) from None
         authenticated_url, cookies = authentication
-        print("YouTube requested sign-in. Trying the configured YouTube session once.")
+        print("YouTube rejected the guest request. Trying the configured YouTube session once.")
         with cookies:
             try:
                 return extract_media(authenticated_url, {
                     **options, "cookiefile": cookies, "allowed_extractors": ["youtube"],
                 })
             except yt_dlp.utils.DownloadError as session_error:
-                if not youtube_login_required(session_error):
+                if not youtube_session_retryable(session_error):
                     raise
                 raise DeliveryError(
-                    "يوتيوب رفض جلسة الدخول المحفوظة لهذا المقطع. إذا عندك الملف الأصلي، أرسل رابطه المباشر. "
+                    "يوتيوب لم يُتح تنزيل هذا المقطع باستخدام جلسة الحساب المحفوظة. إذا عندك الملف الأصلي، أرسل رابطه المباشر. "
                     "إذا المقطع من قناتك، تقدر تصدّره من استوديو يوتيوب أو Google Takeout."
                 ) from None
 

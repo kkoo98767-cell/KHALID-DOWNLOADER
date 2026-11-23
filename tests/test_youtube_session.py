@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import yt_dlp
 
-from app.delivery import DeliveryError
-from app.main import download_source, youtube_authentication
+from app.delivery import DeliveryError, ResourceBlocked
+from app.main import download_source, main, youtube_authentication
 
 
 COOKIE_FILE = (
@@ -75,6 +75,7 @@ class YouTubeSessionTests(unittest.TestCase):
             ("https://youtube.com/watch?v=VFE3slVdK3g", "[youtube] HTTP Error 403", {}),
             ("https://youtu.be/VFE3slVdK3g", "[youtube] Sign in to confirm", {"video": 120}),
             ("https://other.example/video", "[youtube] Sign in to confirm", {}),
+            ("https://youtu.be/VFE3slVdK3g", "[youtube] Video unavailable. Removed by uploader", {}),
         ):
             with self.subTest(url=url, detail=detail):
                 extract.reset_mock()
@@ -86,9 +87,49 @@ class YouTubeSessionTests(unittest.TestCase):
     @patch("app.main.extract_media")
     def test_rejected_session_stops_and_reports_original_file_option(self, extract):
         extract.side_effect = yt_dlp.utils.DownloadError("[youtube] Sign in to confirm")
-        with self.assertRaisesRegex(DeliveryError, "رفض جلسة الدخول"):
+        with self.assertRaisesRegex(DeliveryError, "لم يُتح تنزيل"):
             download_source("https://youtu.be/VFE3slVdK3g", {}, SimpleNamespace(files={}), COOKIE_FILE)
         self.assertEqual(extract.call_count, 2)
+
+    @patch("app.main.extract_media")
+    def test_guest_unavailable_uses_one_session_attempt(self, extract):
+        result = ({"id": "VFE3slVdK3g"}, Path("video.mp4"))
+        for message in (
+            "[youtube] Video unavailable. This content isn’t available.",
+            "[youtube] This content isn't available, try again later",
+        ):
+            with self.subTest(message=message):
+                extract.reset_mock()
+                extract.side_effect = [yt_dlp.utils.DownloadError(message), result]
+                self.assertEqual(download_source(
+                    "https://youtu.be/VFE3slVdK3g", {}, SimpleNamespace(files={}), COOKIE_FILE
+                ), result)
+                self.assertEqual(extract.call_count, 2)
+                self.assertTrue(extract.call_args.args[1]["cookiefile"].closed)
+
+    @patch("app.main.extract_media")
+    def test_unavailable_after_session_stops_after_two_attempts(self, extract):
+        extract.side_effect = yt_dlp.utils.DownloadError(
+            "[youtube] Video unavailable. This content isn’t available."
+        )
+        with self.assertRaisesRegex(DeliveryError, "لم يُتح تنزيل"):
+            download_source("https://youtu.be/VFE3slVdK3g", {}, SimpleNamespace(files={}), COOKIE_FILE)
+        self.assertEqual(extract.call_count, 2)
+
+    @patch("app.main.ResourceClient")
+    @patch("app.main.download_source", side_effect=ResourceBlocked("unavailable"))
+    @patch("app.main.telegram_call")
+    def test_main_sends_arabic_notice_after_resource_rejection(self, telegram, download, resources):
+        with patch.dict("os.environ", {
+            "TELEGRAM_BOT_TOKEN": "test-token", "TELEGRAM_CHAT_ID": "test-chat",
+            "VIDEO_URL": "https://youtu.be/VFE3slVdK3g",
+        }, clear=True):
+            self.assertEqual(main(), 1)
+        telegram.assert_called_once()
+        notice = telegram.call_args.args[2]["text"]
+        self.assertIn("تعذر التحقق", notice)
+        self.assertNotIn("test-token", notice)
+        resources.return_value.notify.assert_called_once_with("test-token", "test-chat")
 
 
 if __name__ == "__main__":
