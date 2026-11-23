@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   download:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -33,10 +33,20 @@ jobs:
           package-manager-cache: false
       - name: Ensure media tools are available for playback checks
         run: |
-          if ! command -v ffprobe >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1 || ! command -v exiftool >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y ffmpeg libimage-exiftool-perl
+          packages=()
+          if ! command -v ffprobe >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
+            packages+=(ffmpeg)
           fi
+          if ! command -v exiftool >/dev/null 2>&1; then
+            packages+=(libimage-exiftool-perl)
+          fi
+          if ((${#packages[@]})); then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends "${packages[@]}"
+          fi
+          ffmpeg -version
+          ffprobe -version
+          exiftool -ver
       - name: Install dependencies
         run: python -m pip install --upgrade pip && pip install -r requirements.txt
       - name: Download original and deliver through Telegram or R2 link
